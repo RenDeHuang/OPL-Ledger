@@ -32,15 +32,32 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (En
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var sourceEntry Entry
+	var sourceFound bool
 	if input.SourceEventID != "" {
-		if existing, ok := s.bySourceEvent[input.SourceEventID]; ok {
-			return existing, nil
-		}
+		sourceEntry, sourceFound = s.bySourceEvent[input.SourceEventID]
 	}
+	var fingerprintEntry Entry
+	var fingerprintFound bool
 	if input.RequestFingerprint != "" {
-		if existing, ok := s.byRequestFingerprint[input.RequestFingerprint]; ok {
-			return existing, nil
+		fingerprintEntry, fingerprintFound = s.byRequestFingerprint[input.RequestFingerprint]
+	}
+	if sourceFound && fingerprintFound && sourceEntry.ID != fingerprintEntry.ID {
+		return Entry{}, errors.New("idempotency keys resolve to different ledger entries")
+	}
+	if sourceFound {
+		entry := sourceEntry
+		if input.RequestFingerprint != "" && !fingerprintFound {
+			entry = s.bindRequestFingerprint(entry, input.RequestFingerprint)
 		}
+		return entry, nil
+	}
+	if fingerprintFound {
+		entry := fingerprintEntry
+		if input.SourceEventID != "" && !sourceFound {
+			entry = s.bindSourceEvent(entry, input.SourceEventID)
+		}
+		return entry, nil
 	}
 	entry := Entry{
 		ID:                 randomID(),
@@ -65,6 +82,38 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (En
 		s.byRequestFingerprint[entry.RequestFingerprint] = entry
 	}
 	return entry, nil
+}
+
+func (s *MemoryStore) bindRequestFingerprint(entry Entry, requestFingerprint string) Entry {
+	entry.RequestFingerprint = requestFingerprint
+	for i := range s.entries {
+		if s.entries[i].ID == entry.ID {
+			s.entries[i].RequestFingerprint = requestFingerprint
+			entry = s.entries[i]
+			break
+		}
+	}
+	s.byRequestFingerprint[requestFingerprint] = entry
+	if entry.SourceEventID != "" {
+		s.bySourceEvent[entry.SourceEventID] = entry
+	}
+	return entry
+}
+
+func (s *MemoryStore) bindSourceEvent(entry Entry, sourceEventID string) Entry {
+	entry.SourceEventID = sourceEventID
+	for i := range s.entries {
+		if s.entries[i].ID == entry.ID {
+			s.entries[i].SourceEventID = sourceEventID
+			entry = s.entries[i]
+			break
+		}
+	}
+	s.bySourceEvent[sourceEventID] = entry
+	if entry.RequestFingerprint != "" {
+		s.byRequestFingerprint[entry.RequestFingerprint] = entry
+	}
+	return entry
 }
 
 func (s *MemoryStore) ListEntries(_ context.Context, filter EntryFilter) ([]Entry, error) {
