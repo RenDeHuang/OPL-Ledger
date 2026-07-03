@@ -38,6 +38,7 @@ type LineReport struct {
 	LedgerAmountCents   int64  `json:"ledgerAmountCents"`
 	ExpectedAmountCents int64  `json:"expectedAmountCents"`
 	DifferenceCents     int64  `json:"differenceCents"`
+	InvalidLedgerRows   int    `json:"invalidLedgerRows"`
 }
 
 type reconcileKey struct {
@@ -47,12 +48,17 @@ type reconcileKey struct {
 
 func ReconcileTencentBills(input Input) Report {
 	ledgerByKey := make(map[reconcileKey]int64)
+	invalidLedgerRowsByKey := make(map[reconcileKey]int)
 	tencentByKey := make(map[reconcileKey]int64)
 	keys := make(map[reconcileKey]struct{})
 
 	for _, row := range input.LedgerRows {
 		key := reconcileKey{workspaceID: row.WorkspaceID, resourceType: row.ResourceType}
-		ledgerByKey[key] += absCents(row.AmountCents)
+		if row.AmountCents < 0 {
+			ledgerByKey[key] += -row.AmountCents
+		} else {
+			invalidLedgerRowsByKey[key]++
+		}
 		keys[key] = struct{}{}
 	}
 	for _, row := range input.TencentRows {
@@ -75,10 +81,11 @@ func ReconcileTencentBills(input Input) Report {
 	report := Report{Status: "pass"}
 	for _, key := range orderedKeys {
 		ledger := ledgerByKey[key]
+		invalidLedgerRows := invalidLedgerRowsByKey[key]
 		expected := int64(math.Round(float64(tencentByKey[key]) * (1 + input.MarkupRate)))
 		diff := ledger - expected
 		status := "pass"
-		if diff < -1 {
+		if diff < -1 || invalidLedgerRows > 0 {
 			status = "fail"
 			report.Status = "fail"
 		}
@@ -92,14 +99,8 @@ func ReconcileTencentBills(input Input) Report {
 			LedgerAmountCents:   ledger,
 			ExpectedAmountCents: expected,
 			DifferenceCents:     diff,
+			InvalidLedgerRows:   invalidLedgerRows,
 		})
 	}
 	return report
-}
-
-func absCents(amount int64) int64 {
-	if amount < 0 {
-		return -amount
-	}
-	return amount
 }

@@ -19,10 +19,34 @@ func TestTencentReconciliationPassesWhenLedgerCoversCostPlusMarkup(t *testing.T)
 	}
 }
 
+func TestTencentReconciliationFailsWhenPositiveLedgerRowMatchesCostPlusMarkup(t *testing.T) {
+	report := ReconcileTencentBills(Input{
+		MarkupRate:  0.20,
+		LedgerRows:  []LedgerRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1200}},
+		TencentRows: []TencentRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1000}},
+	})
+	if report.Status != "fail" {
+		t.Fatalf("expected fail, got %s diff=%d", report.Status, report.DifferenceCents)
+	}
+	if report.LedgerAmountCents != 0 {
+		t.Fatalf("expected positive ledger amount to be excluded, got %d", report.LedgerAmountCents)
+	}
+	if len(report.Lines) != 1 {
+		t.Fatalf("expected 1 line report, got %d", len(report.Lines))
+	}
+	line := report.Lines[0]
+	if line.Status != "fail" {
+		t.Fatalf("expected line fail, got %s", line.Status)
+	}
+	if line.InvalidLedgerRows != 1 {
+		t.Fatalf("expected 1 invalid ledger row, got %d", line.InvalidLedgerRows)
+	}
+}
+
 func TestTencentReconciliationFailsWhenLedgerUndercharges(t *testing.T) {
 	report := ReconcileTencentBills(Input{
 		MarkupRate:  0.20,
-		LedgerRows:  []LedgerRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1000}},
+		LedgerRows:  []LedgerRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: -1000}},
 		TencentRows: []TencentRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1000}},
 	})
 	if report.Status != "fail" {
