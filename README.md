@@ -4,7 +4,7 @@
 
 It owns billing ledger events, audit events, evidence records, receipts, idempotency, usage records, Tencent bill reconciliation, and read-only Kubernetes runtime evidence snapshots.
 
-It does not own OPL Console workspace lifecycle screens, OPL Fabric provisioning, OPL Gateway internals, One Person Lab framework internals, or `one-person-lab-app` runtime behavior.
+It does not own OPL Console lifecycle screens, OPL Fabric provisioning, OPL Gateway internals, One Person Lab framework internals, or `one-person-lab-app` runtime behavior.
 
 ## Stack
 
