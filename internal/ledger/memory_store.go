@@ -27,6 +27,9 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (Ap
 	if input.EventType == "" {
 		return AppendEntryResult{}, errors.New("eventType is required")
 	}
+	if input.SourceEventID == "" && input.RequestFingerprint == "" {
+		return AppendEntryResult{}, errors.New("sourceEventId or requestFingerprint is required")
+	}
 	if input.Currency == "" {
 		input.Currency = "CNY"
 	}
@@ -47,6 +50,9 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (Ap
 	}
 	if sourceFound {
 		entry := sourceEntry
+		if !sameReplayPayload(entry, input) {
+			return AppendEntryResult{}, ErrIdempotencyConflict
+		}
 		if input.RequestFingerprint != "" {
 			if entry.RequestFingerprint != "" && entry.RequestFingerprint != input.RequestFingerprint {
 				return AppendEntryResult{}, ErrIdempotencyConflict
@@ -59,6 +65,9 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (Ap
 	}
 	if fingerprintFound {
 		entry := fingerprintEntry
+		if !sameReplayPayload(entry, input) {
+			return AppendEntryResult{}, ErrIdempotencyConflict
+		}
 		if input.SourceEventID != "" {
 			if entry.SourceEventID != "" && entry.SourceEventID != input.SourceEventID {
 				return AppendEntryResult{}, ErrIdempotencyConflict
@@ -92,6 +101,18 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (Ap
 		s.byRequestFingerprint[entry.RequestFingerprint] = entry
 	}
 	return AppendEntryResult{Entry: entry, Created: true}, nil
+}
+
+func sameReplayPayload(entry Entry, input AppendEntryInput) bool {
+	return entry.EventType == input.EventType &&
+		entry.AccountID == input.AccountID &&
+		entry.UserID == input.UserID &&
+		entry.WorkspaceID == input.WorkspaceID &&
+		entry.ComputeID == input.ComputeID &&
+		entry.StorageID == input.StorageID &&
+		entry.AttachmentID == input.AttachmentID &&
+		entry.AmountCents == input.AmountCents &&
+		entry.Currency == input.Currency
 }
 
 func (s *MemoryStore) bindRequestFingerprint(entry Entry, requestFingerprint string) Entry {

@@ -43,6 +43,24 @@ func TestMemoryStoreAppendIsIdempotentBySourceEvent(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreAppendRejectsMissingIdempotencyKey(t *testing.T) {
+	store := NewMemoryStore()
+	_, err := store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:   "compute_debit",
+		AccountID:   "acct_1",
+		WorkspaceID: "ws_1",
+		ComputeID:   "compute_1",
+		AmountCents: 390,
+		Currency:    "CNY",
+	})
+	if err == nil {
+		t.Fatalf("expected missing idempotency key error")
+	}
+	if errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("expected validation error, got idempotency conflict")
+	}
+}
+
 func TestMemoryStoreAppendIsIdempotentByRequestFingerprint(t *testing.T) {
 	store := NewMemoryStore()
 	input := AppendEntryInput{
@@ -77,6 +95,81 @@ func TestMemoryStoreAppendIsIdempotentByRequestFingerprint(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+}
+
+func TestMemoryStoreAppendRejectsSourceEventReplayWithDifferentAmount(t *testing.T) {
+	store := NewMemoryStore()
+	_, err := store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:     "compute_debit",
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		ComputeID:     "compute_1",
+		SourceEventID: "evt_1",
+		AmountCents:   390,
+		Currency:      "CNY",
+	})
+	if err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+
+	_, err = store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:     "compute_debit",
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		ComputeID:     "compute_1",
+		SourceEventID: "evt_1",
+		AmountCents:   490,
+		Currency:      "CNY",
+	})
+	if err == nil {
+		t.Fatalf("expected replay payload conflict")
+	}
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("expected idempotency conflict error, got %v", err)
+	}
+}
+
+func TestMemoryStoreAppendRejectsRequestFingerprintReplayWithDifferentEventTypeOrWorkspace(t *testing.T) {
+	store := NewMemoryStore()
+	_, err := store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:          "compute_debit",
+		AccountID:          "acct_1",
+		WorkspaceID:        "ws_1",
+		ComputeID:          "compute_1",
+		RequestFingerprint: "req_1",
+		AmountCents:        390,
+		Currency:           "CNY",
+	})
+	if err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		eventType string
+		workspace string
+	}{
+		{name: "event type", eventType: "storage_debit", workspace: "ws_1"},
+		{name: "workspace", eventType: "compute_debit", workspace: "ws_2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := store.AppendEntry(context.Background(), AppendEntryInput{
+				EventType:          tc.eventType,
+				AccountID:          "acct_1",
+				WorkspaceID:        tc.workspace,
+				ComputeID:          "compute_1",
+				RequestFingerprint: "req_1",
+				AmountCents:        390,
+				Currency:           "CNY",
+			})
+			if err == nil {
+				t.Fatalf("expected replay payload conflict")
+			}
+			if !errors.Is(err, ErrIdempotencyConflict) {
+				t.Fatalf("expected idempotency conflict error, got %v", err)
+			}
+		})
 	}
 }
 

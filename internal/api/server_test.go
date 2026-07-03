@@ -92,6 +92,29 @@ func TestAppendLedgerEntryConflictingIdempotencyKeysReturnConflict(t *testing.T)
 	}
 }
 
+func TestAppendLedgerEntryWithoutIdempotencyKeyReturnsBadRequest(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+
+	response := postLedgerEntry(t, server, []byte(`{"eventType":"compute_debit","accountId":"acct_1","workspaceId":"ws_1","amountCents":-390,"currency":"CNY"}`))
+	if response.code != http.StatusBadRequest {
+		t.Fatalf("missing idempotency key status = %d body=%s", response.code, response.body)
+	}
+}
+
+func TestAppendLedgerEntryConflictingReplayReturnsConflict(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+
+	first := postLedgerEntry(t, server, []byte(`{"eventType":"compute_debit","accountId":"acct_1","workspaceId":"ws_1","sourceEventId":"evt_1","amountCents":-390,"currency":"CNY"}`))
+	if first.code != http.StatusCreated {
+		t.Fatalf("first status = %d body=%s", first.code, first.body)
+	}
+
+	conflict := postLedgerEntry(t, server, []byte(`{"eventType":"compute_debit","accountId":"acct_1","workspaceId":"ws_1","sourceEventId":"evt_1","amountCents":-490,"currency":"CNY"}`))
+	if conflict.code != http.StatusConflict {
+		t.Fatalf("conflict status = %d body=%s", conflict.code, conflict.body)
+	}
+}
+
 func TestAppendLedgerEntryValidationErrorsRemainBadRequest(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 
