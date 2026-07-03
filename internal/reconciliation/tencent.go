@@ -1,6 +1,9 @@
 package reconciliation
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 type LedgerRow struct {
 	WorkspaceID  string
@@ -21,31 +24,82 @@ type Input struct {
 }
 
 type Report struct {
+	Status              string       `json:"status"`
+	LedgerAmountCents   int64        `json:"ledgerAmountCents"`
+	ExpectedAmountCents int64        `json:"expectedAmountCents"`
+	DifferenceCents     int64        `json:"differenceCents"`
+	Lines               []LineReport `json:"lines"`
+}
+
+type LineReport struct {
+	WorkspaceID         string `json:"workspaceId"`
+	ResourceType        string `json:"resourceType"`
 	Status              string `json:"status"`
 	LedgerAmountCents   int64  `json:"ledgerAmountCents"`
 	ExpectedAmountCents int64  `json:"expectedAmountCents"`
 	DifferenceCents     int64  `json:"differenceCents"`
 }
 
+type reconcileKey struct {
+	workspaceID  string
+	resourceType string
+}
+
 func ReconcileTencentBills(input Input) Report {
-	var ledgerTotal int64
+	ledgerByKey := make(map[reconcileKey]int64)
+	tencentByKey := make(map[reconcileKey]int64)
+	keys := make(map[reconcileKey]struct{})
+
 	for _, row := range input.LedgerRows {
-		ledgerTotal += row.AmountCents
+		key := reconcileKey{workspaceID: row.WorkspaceID, resourceType: row.ResourceType}
+		ledgerByKey[key] += absCents(row.AmountCents)
+		keys[key] = struct{}{}
 	}
-	var tencentTotal int64
 	for _, row := range input.TencentRows {
-		tencentTotal += row.AmountCents
+		key := reconcileKey{workspaceID: row.WorkspaceID, resourceType: row.ResourceType}
+		tencentByKey[key] += row.AmountCents
+		keys[key] = struct{}{}
 	}
-	expected := int64(math.Round(float64(tencentTotal) * (1 + input.MarkupRate)))
-	diff := ledgerTotal - expected
-	status := "pass"
-	if diff < 0 {
-		status = "fail"
+
+	orderedKeys := make([]reconcileKey, 0, len(keys))
+	for key := range keys {
+		orderedKeys = append(orderedKeys, key)
 	}
-	return Report{
-		Status:              status,
-		LedgerAmountCents:   ledgerTotal,
-		ExpectedAmountCents: expected,
-		DifferenceCents:     diff,
+	sort.Slice(orderedKeys, func(i, j int) bool {
+		if orderedKeys[i].workspaceID == orderedKeys[j].workspaceID {
+			return orderedKeys[i].resourceType < orderedKeys[j].resourceType
+		}
+		return orderedKeys[i].workspaceID < orderedKeys[j].workspaceID
+	})
+
+	report := Report{Status: "pass"}
+	for _, key := range orderedKeys {
+		ledger := ledgerByKey[key]
+		expected := int64(math.Round(float64(tencentByKey[key]) * (1 + input.MarkupRate)))
+		diff := ledger - expected
+		status := "pass"
+		if diff < -1 {
+			status = "fail"
+			report.Status = "fail"
+		}
+		report.LedgerAmountCents += ledger
+		report.ExpectedAmountCents += expected
+		report.DifferenceCents += diff
+		report.Lines = append(report.Lines, LineReport{
+			WorkspaceID:         key.workspaceID,
+			ResourceType:        key.resourceType,
+			Status:              status,
+			LedgerAmountCents:   ledger,
+			ExpectedAmountCents: expected,
+			DifferenceCents:     diff,
+		})
 	}
+	return report
+}
+
+func absCents(amount int64) int64 {
+	if amount < 0 {
+		return -amount
+	}
+	return amount
 }

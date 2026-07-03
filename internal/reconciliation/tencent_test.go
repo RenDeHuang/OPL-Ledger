@@ -5,11 +5,17 @@ import "testing"
 func TestTencentReconciliationPassesWhenLedgerCoversCostPlusMarkup(t *testing.T) {
 	report := ReconcileTencentBills(Input{
 		MarkupRate:  0.20,
-		LedgerRows:  []LedgerRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1200}},
+		LedgerRows:  []LedgerRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: -1200}},
 		TencentRows: []TencentRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1000}},
 	})
 	if report.Status != "pass" {
 		t.Fatalf("expected pass, got %s diff=%d", report.Status, report.DifferenceCents)
+	}
+	if report.LedgerAmountCents != 1200 {
+		t.Fatalf("expected normalized ledger amount 1200, got %d", report.LedgerAmountCents)
+	}
+	if report.DifferenceCents != 0 {
+		t.Fatalf("expected 0 difference, got %d", report.DifferenceCents)
 	}
 }
 
@@ -24,5 +30,69 @@ func TestTencentReconciliationFailsWhenLedgerUndercharges(t *testing.T) {
 	}
 	if report.DifferenceCents != -200 {
 		t.Fatalf("expected -200 difference, got %d", report.DifferenceCents)
+	}
+}
+
+func TestTencentReconciliationFailsWhenGlobalOverchargeHidesPerResourceUndercharge(t *testing.T) {
+	report := ReconcileTencentBills(Input{
+		MarkupRate: 0.20,
+		LedgerRows: []LedgerRow{
+			{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: -2400},
+			{WorkspaceID: "ws_2", ResourceType: "storage", AmountCents: -1000},
+		},
+		TencentRows: []TencentRow{
+			{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1000},
+			{WorkspaceID: "ws_2", ResourceType: "storage", AmountCents: 1000},
+		},
+	})
+	if report.Status != "fail" {
+		t.Fatalf("expected fail, got %s diff=%d", report.Status, report.DifferenceCents)
+	}
+	if report.DifferenceCents != 1000 {
+		t.Fatalf("expected aggregate overcharge difference 1000, got %d", report.DifferenceCents)
+	}
+	if len(report.Lines) != 2 {
+		t.Fatalf("expected 2 line reports, got %d", len(report.Lines))
+	}
+
+	var undercharged LineReport
+	for _, line := range report.Lines {
+		if line.WorkspaceID == "ws_2" && line.ResourceType == "storage" {
+			undercharged = line
+		}
+	}
+	if undercharged.WorkspaceID == "" {
+		t.Fatal("expected ws_2/storage line report")
+	}
+	if undercharged.Status != "fail" || undercharged.DifferenceCents != -200 {
+		t.Fatalf("expected ws_2/storage to fail with -200 difference, got status=%s diff=%d", undercharged.Status, undercharged.DifferenceCents)
+	}
+}
+
+func TestTencentReconciliationPassesOneCentUnderchargeTolerance(t *testing.T) {
+	report := ReconcileTencentBills(Input{
+		MarkupRate:  0,
+		LedgerRows:  []LedgerRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: -999}},
+		TencentRows: []TencentRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1000}},
+	})
+	if report.Status != "pass" {
+		t.Fatalf("expected pass, got %s diff=%d", report.Status, report.DifferenceCents)
+	}
+	if report.DifferenceCents != -1 {
+		t.Fatalf("expected -1 difference, got %d", report.DifferenceCents)
+	}
+}
+
+func TestTencentReconciliationFailsTwoCentUndercharge(t *testing.T) {
+	report := ReconcileTencentBills(Input{
+		MarkupRate:  0,
+		LedgerRows:  []LedgerRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: -998}},
+		TencentRows: []TencentRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1000}},
+	})
+	if report.Status != "fail" {
+		t.Fatalf("expected fail, got %s diff=%d", report.Status, report.DifferenceCents)
+	}
+	if report.DifferenceCents != -2 {
+		t.Fatalf("expected -2 difference, got %d", report.DifferenceCents)
 	}
 }
