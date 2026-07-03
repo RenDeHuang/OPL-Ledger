@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/RenDeHuang/OPL-Ledger/internal/ledger"
@@ -40,17 +41,20 @@ func (s *Server) appendEntry(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
 		return
 	}
-	before, _ := s.store.ListEntries(r.Context(), ledger.EntryFilter{SourceEventID: input.SourceEventID})
-	entry, err := s.store.AppendEntry(r.Context(), input)
+	result, err := s.store.AppendEntry(r.Context(), input)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, ledger.ErrIdempotencyConflict) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
 	status := http.StatusCreated
-	if input.SourceEventID != "" && len(before) > 0 {
+	if !result.Created {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, entry)
+	writeJSON(w, status, result.Entry)
 }
 
 func (s *Server) listEntries(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -23,6 +24,12 @@ func TestMemoryStoreAppendIsIdempotentBySourceEvent(t *testing.T) {
 	second, err := store.AppendEntry(context.Background(), input)
 	if err != nil {
 		t.Fatalf("second append: %v", err)
+	}
+	if !first.Created {
+		t.Fatalf("expected first append to create an entry")
+	}
+	if second.Created {
+		t.Fatalf("expected second append to replay existing entry")
 	}
 	if first.ID != second.ID {
 		t.Fatalf("expected idempotent ID %q, got %q", first.ID, second.ID)
@@ -54,6 +61,12 @@ func TestMemoryStoreAppendIsIdempotentByRequestFingerprint(t *testing.T) {
 	second, err := store.AppendEntry(context.Background(), input)
 	if err != nil {
 		t.Fatalf("second append: %v", err)
+	}
+	if !first.Created {
+		t.Fatalf("expected first append to create an entry")
+	}
+	if second.Created {
+		t.Fatalf("expected second append to replay existing entry")
 	}
 	if first.ID != second.ID {
 		t.Fatalf("expected idempotent ID %q, got %q", first.ID, second.ID)
@@ -89,6 +102,9 @@ func TestMemoryStoreAppendBindsRequestFingerprintToExistingSourceEvent(t *testin
 	})
 	if err != nil {
 		t.Fatalf("mixed retry append: %v", err)
+	}
+	if second.Created {
+		t.Fatalf("expected mixed retry append to replay existing entry")
 	}
 	if first.ID != second.ID {
 		t.Fatalf("expected mixed retry ID %q, got %q", first.ID, second.ID)
@@ -138,6 +154,9 @@ func TestMemoryStoreAppendBindsSourceEventToExistingRequestFingerprint(t *testin
 	if err != nil {
 		t.Fatalf("mixed retry append: %v", err)
 	}
+	if second.Created {
+		t.Fatalf("expected mixed retry append to replay existing entry")
+	}
 	if first.ID != second.ID {
 		t.Fatalf("expected mixed retry ID %q, got %q", first.ID, second.ID)
 	}
@@ -186,6 +205,9 @@ func TestMemoryStoreAppendRejectsDifferentFingerprintForExistingSourceEvent(t *t
 	})
 	if err == nil {
 		t.Fatalf("expected conflicting request fingerprint error")
+	}
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("expected idempotency conflict error, got %v", err)
 	}
 	if _, ok := store.byRequestFingerprint["fp_2"]; ok {
 		t.Fatalf("conflicting request fingerprint was bound")
@@ -254,6 +276,9 @@ func TestMemoryStoreAppendRejectsDifferentSourceForExistingRequestFingerprint(t 
 	})
 	if err == nil {
 		t.Fatalf("expected conflicting source event error")
+	}
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("expected idempotency conflict error, got %v", err)
 	}
 	if _, ok := store.bySourceEvent["evt_2"]; ok {
 		t.Fatalf("conflicting source event was bound")
@@ -334,6 +359,9 @@ func TestMemoryStoreAppendRejectsConflictingIdempotencyKeys(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected conflicting idempotency keys error")
+	}
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("expected idempotency conflict error, got %v", err)
 	}
 	entries, err := store.ListEntries(context.Background(), EntryFilter{AccountID: "acct_1"})
 	if err != nil {

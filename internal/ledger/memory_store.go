@@ -23,9 +23,9 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (Entry, error) {
+func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (AppendEntryResult, error) {
 	if input.EventType == "" {
-		return Entry{}, errors.New("eventType is required")
+		return AppendEntryResult{}, errors.New("eventType is required")
 	}
 	if input.Currency == "" {
 		input.Currency = "CNY"
@@ -43,31 +43,31 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (En
 		fingerprintEntry, fingerprintFound = s.byRequestFingerprint[input.RequestFingerprint]
 	}
 	if sourceFound && fingerprintFound && sourceEntry.ID != fingerprintEntry.ID {
-		return Entry{}, errors.New("idempotency keys resolve to different ledger entries")
+		return AppendEntryResult{}, ErrIdempotencyConflict
 	}
 	if sourceFound {
 		entry := sourceEntry
 		if input.RequestFingerprint != "" {
 			if entry.RequestFingerprint != "" && entry.RequestFingerprint != input.RequestFingerprint {
-				return Entry{}, errors.New("idempotency keys resolve to different ledger entries")
+				return AppendEntryResult{}, ErrIdempotencyConflict
 			}
 			if !fingerprintFound {
 				entry = s.bindRequestFingerprint(entry, input.RequestFingerprint)
 			}
 		}
-		return entry, nil
+		return AppendEntryResult{Entry: entry, Created: false}, nil
 	}
 	if fingerprintFound {
 		entry := fingerprintEntry
 		if input.SourceEventID != "" {
 			if entry.SourceEventID != "" && entry.SourceEventID != input.SourceEventID {
-				return Entry{}, errors.New("idempotency keys resolve to different ledger entries")
+				return AppendEntryResult{}, ErrIdempotencyConflict
 			}
 			if !sourceFound {
 				entry = s.bindSourceEvent(entry, input.SourceEventID)
 			}
 		}
-		return entry, nil
+		return AppendEntryResult{Entry: entry, Created: false}, nil
 	}
 	entry := Entry{
 		ID:                 randomID(),
@@ -91,7 +91,7 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (En
 	if entry.RequestFingerprint != "" {
 		s.byRequestFingerprint[entry.RequestFingerprint] = entry
 	}
-	return entry, nil
+	return AppendEntryResult{Entry: entry, Created: true}, nil
 }
 
 func (s *MemoryStore) bindRequestFingerprint(entry Entry, requestFingerprint string) Entry {

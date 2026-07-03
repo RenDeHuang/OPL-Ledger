@@ -1,6 +1,11 @@
 package ledger
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var ErrIdempotencyConflict = errors.New("idempotency keys resolve to different ledger entries")
 
 type Entry struct {
 	ID                 string    `json:"id"`
@@ -30,6 +35,11 @@ type AppendEntryInput struct {
 	RequestFingerprint string `json:"requestFingerprint,omitempty"`
 	AmountCents        int64  `json:"amountCents"`
 	Currency           string `json:"currency"`
+}
+
+type AppendEntryResult struct {
+	Entry
+	Created bool
 }
 
 type EntryFilter struct {
