@@ -47,15 +47,25 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (En
 	}
 	if sourceFound {
 		entry := sourceEntry
-		if input.RequestFingerprint != "" && !fingerprintFound {
-			entry = s.bindRequestFingerprint(entry, input.RequestFingerprint)
+		if input.RequestFingerprint != "" {
+			if entry.RequestFingerprint != "" && entry.RequestFingerprint != input.RequestFingerprint {
+				return Entry{}, errors.New("idempotency keys resolve to different ledger entries")
+			}
+			if !fingerprintFound {
+				entry = s.bindRequestFingerprint(entry, input.RequestFingerprint)
+			}
 		}
 		return entry, nil
 	}
 	if fingerprintFound {
 		entry := fingerprintEntry
-		if input.SourceEventID != "" && !sourceFound {
-			entry = s.bindSourceEvent(entry, input.SourceEventID)
+		if input.SourceEventID != "" {
+			if entry.SourceEventID != "" && entry.SourceEventID != input.SourceEventID {
+				return Entry{}, errors.New("idempotency keys resolve to different ledger entries")
+			}
+			if !sourceFound {
+				entry = s.bindSourceEvent(entry, input.SourceEventID)
+			}
 		}
 		return entry, nil
 	}

@@ -163,6 +163,142 @@ func TestMemoryStoreAppendBindsSourceEventToExistingRequestFingerprint(t *testin
 	}
 }
 
+func TestMemoryStoreAppendRejectsDifferentFingerprintForExistingSourceEvent(t *testing.T) {
+	store := NewMemoryStore()
+	first, err := store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:          "compute_debit",
+		AccountID:          "acct_1",
+		SourceEventID:      "evt_1",
+		RequestFingerprint: "fp_1",
+		AmountCents:        390,
+		Currency:           "CNY",
+	})
+	if err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+	_, err = store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:          "compute_debit",
+		AccountID:          "acct_1",
+		SourceEventID:      "evt_1",
+		RequestFingerprint: "fp_2",
+		AmountCents:        390,
+		Currency:           "CNY",
+	})
+	if err == nil {
+		t.Fatalf("expected conflicting request fingerprint error")
+	}
+	if _, ok := store.byRequestFingerprint["fp_2"]; ok {
+		t.Fatalf("conflicting request fingerprint was bound")
+	}
+	sourceRetry, err := store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:     "compute_debit",
+		AccountID:     "acct_1",
+		SourceEventID: "evt_1",
+		AmountCents:   390,
+		Currency:      "CNY",
+	})
+	if err != nil {
+		t.Fatalf("source event retry append: %v", err)
+	}
+	if sourceRetry.ID != first.ID {
+		t.Fatalf("expected source event retry ID %q, got %q", first.ID, sourceRetry.ID)
+	}
+	if sourceRetry.RequestFingerprint != "fp_1" {
+		t.Fatalf("expected original request fingerprint fp_1, got %q", sourceRetry.RequestFingerprint)
+	}
+	fingerprintRetry, err := store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:          "compute_debit",
+		AccountID:          "acct_1",
+		RequestFingerprint: "fp_1",
+		AmountCents:        390,
+		Currency:           "CNY",
+	})
+	if err != nil {
+		t.Fatalf("request fingerprint retry append: %v", err)
+	}
+	if fingerprintRetry.ID != first.ID {
+		t.Fatalf("expected request fingerprint retry ID %q, got %q", first.ID, fingerprintRetry.ID)
+	}
+	if fingerprintRetry.SourceEventID != "evt_1" {
+		t.Fatalf("expected original source event evt_1, got %q", fingerprintRetry.SourceEventID)
+	}
+	entries, err := store.ListEntries(context.Background(), EntryFilter{AccountID: "acct_1"})
+	if err != nil {
+		t.Fatalf("list entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+}
+
+func TestMemoryStoreAppendRejectsDifferentSourceForExistingRequestFingerprint(t *testing.T) {
+	store := NewMemoryStore()
+	first, err := store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:          "compute_debit",
+		AccountID:          "acct_1",
+		SourceEventID:      "evt_1",
+		RequestFingerprint: "fp_1",
+		AmountCents:        390,
+		Currency:           "CNY",
+	})
+	if err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+	_, err = store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:          "compute_debit",
+		AccountID:          "acct_1",
+		SourceEventID:      "evt_2",
+		RequestFingerprint: "fp_1",
+		AmountCents:        390,
+		Currency:           "CNY",
+	})
+	if err == nil {
+		t.Fatalf("expected conflicting source event error")
+	}
+	if _, ok := store.bySourceEvent["evt_2"]; ok {
+		t.Fatalf("conflicting source event was bound")
+	}
+	fingerprintRetry, err := store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:          "compute_debit",
+		AccountID:          "acct_1",
+		RequestFingerprint: "fp_1",
+		AmountCents:        390,
+		Currency:           "CNY",
+	})
+	if err != nil {
+		t.Fatalf("request fingerprint retry append: %v", err)
+	}
+	if fingerprintRetry.ID != first.ID {
+		t.Fatalf("expected request fingerprint retry ID %q, got %q", first.ID, fingerprintRetry.ID)
+	}
+	if fingerprintRetry.SourceEventID != "evt_1" {
+		t.Fatalf("expected original source event evt_1, got %q", fingerprintRetry.SourceEventID)
+	}
+	sourceRetry, err := store.AppendEntry(context.Background(), AppendEntryInput{
+		EventType:     "compute_debit",
+		AccountID:     "acct_1",
+		SourceEventID: "evt_1",
+		AmountCents:   390,
+		Currency:      "CNY",
+	})
+	if err != nil {
+		t.Fatalf("source event retry append: %v", err)
+	}
+	if sourceRetry.ID != first.ID {
+		t.Fatalf("expected source event retry ID %q, got %q", first.ID, sourceRetry.ID)
+	}
+	if sourceRetry.RequestFingerprint != "fp_1" {
+		t.Fatalf("expected original request fingerprint fp_1, got %q", sourceRetry.RequestFingerprint)
+	}
+	entries, err := store.ListEntries(context.Background(), EntryFilter{AccountID: "acct_1"})
+	if err != nil {
+		t.Fatalf("list entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+}
+
 func TestMemoryStoreAppendRejectsConflictingIdempotencyKeys(t *testing.T) {
 	store := NewMemoryStore()
 	sourceEntry, err := store.AppendEntry(context.Background(), AppendEntryInput{
