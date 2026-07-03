@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Ledger",
+  "purpose": "Commercial billing ledger, wallet transaction, usage debit, hold, top-up, and reconciliation policy.",
+  "state": "current",
+  "machineBoundary": "Ledger entries, wallet transactions, manual top-up audits, resource usage logs, request usage logs, and billing reconciliation guards.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
+  "billingUnit": "hour",
+  "markup": 0.2,
+  "ledgerEntryTypes": [
+    "credit",
+    "compute_hold",
+    "storage_hold",
+    "compute_debit",
+    "storage_debit",
+    "compute_hold_released",
+    "storage_hold_released",
+    "compute_auto_stopped",
+    "server_billing_stopped",
+    "server_destroyed",
+    "storage_destroyed",
+    "token_reset",
+    "token_deleted",
+    "request_debit",
+    "wallet_transaction",
+    "manual_topup"
+  ],
+  "requiredFields": [
+    "id",
+    "workspaceId",
+    "type",
+    "amount",
+    "currency",
+    "sourceEventId",
+    "createdAt"
+  ],
+  "prepaidHoldPolicy": {
+    "days": 7,
+    "resources": [
+      "compute",
+      "storage"
+    ],
+    "chargeOrder": [
+      "available_balance",
+      "resource_hold"
+    ],
+    "requiredBefore": [
+      "open_workspace",
+      "resume_workspace"
+    ],
+    "unpaidComputeOperationAllowed": false,
+    "unpaidStorageOperationAllowed": false
+  },
+  "tencentBillReconciliation": {
+    "command": "npm run reconcile:tencent -- --ledger <ledger.json> --tencent <tencent-bills.json>",
+    "markup": 0.2,
+    "defaultToleranceCny": 0.01,
+    "ledgerUsageTypes": [
+      "compute_debit",
+      "storage_debit"
+    ],
+    "tencentBillFields": [
+      "workspaceId",
+      "resourceType",
+      "amount",
+      "currency"
+    ],
+    "rawTencentExport": {
+      "supported": true,
+      "requiredWorkspaceTag": "workspace_id",
+      "cliFlag": "--tencent-format raw"
+    },
+    "resourceTypes": [
+      "server",
+      "storage"
+    ],
+    "guard": {
+      "storedIn": "billing_reconciliation_reports",
+      "blocks": [
+        "open_workspace",
+        "restore_workspace_from_backup"
+      ],
+      "doesNotBlock": [
+        "resolve_workspace_access",
+        "settle_billing",
+        "stop_compute",
+        "destroy_compute",
+        "destroy_storage"
+      ],
+      "blockReasons": [
+        "tencent_bill_reconciliation_failed",
+        "billing_reconciliation_report_missing",
+        "billing_reconciliation_report_stale"
+      ],
+      "operatorNotificationType": "billing.reconciliation_guard_blocked"
+    }
+  },
+  "walletPolicy": {
+    "billingTruth": "users",
+    "balanceFields": [
+      "balance",
+      "frozen",
+      "holds",
+      "totalRecharged"
+    ],
+    "mutationRecords": [
+      "walletTransactions",
+      "manualTopups",
+      "billingLedger"
+    ],
+    "compatibilityMirrorsAllowed": false
+  }
+}
