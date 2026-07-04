@@ -180,6 +180,11 @@ type ManualTopUpFilter struct {
 	Status            string
 }
 
+type WalletFilter struct {
+	AccountID string
+	UserID    string
+}
+
 type HoldInput struct {
 	AccountID     string         `json:"accountId"`
 	UserID        string         `json:"userId,omitempty"`

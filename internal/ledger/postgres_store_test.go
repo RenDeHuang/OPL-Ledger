@@ -606,6 +606,28 @@ func TestPostgresStoreListWalletTransactionsFiltersByAccountAndType(t *testing.T
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreListWalletsFiltersByAccountID(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds, created_at, updated_at FROM wallets WHERE account_id = $1 ORDER BY created_at, id`)).
+		WithArgs("acct_1").
+		WillReturnRows(walletRows().AddRow("wal_1", "usr_1", "acct_1", int64(25000), int64(0), int64(25000), []byte(`{}`), createdAt, createdAt))
+
+	wallets, err := store.ListWallets(context.Background(), WalletFilter{AccountID: "acct_1"})
+	if err != nil {
+		t.Fatalf("list wallets: %v", err)
+	}
+	if len(wallets) != 1 {
+		t.Fatalf("expected 1 wallet, got %d", len(wallets))
+	}
+	if wallets[0].AccountID != "acct_1" || wallets[0].BalanceCents != 25000 || wallets[0].AvailableCents != 25000 || wallets[0].TotalRechargedCents != 25000 {
+		t.Fatalf("unexpected wallet snapshot: %+v", wallets[0])
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreListReconciliationReportsFiltersByProviderAndStatus(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

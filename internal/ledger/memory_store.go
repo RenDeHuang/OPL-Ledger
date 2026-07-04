@@ -840,6 +840,19 @@ func (s *MemoryStore) ListManualTopUps(_ context.Context, filter ManualTopUpFilt
 	return out, nil
 }
 
+func (s *MemoryStore) ListWallets(_ context.Context, filter WalletFilter) ([]wallet.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []wallet.Snapshot
+	for _, w := range s.wallets {
+		if !matchesWallet(w, filter) {
+			continue
+		}
+		out = append(out, w.Snapshot())
+	}
+	return out, nil
+}
+
 func (s *MemoryStore) AppendAuditEvent(_ context.Context, input AuditEventInput) (AuditEvent, error) {
 	event, err := auditlog.NewEvent(input)
 	if err != nil {

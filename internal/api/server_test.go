@@ -366,6 +366,36 @@ func TestListManualTopUpsFiltersByAccountAndSourceEvent(t *testing.T) {
 	}
 }
 
+func TestListWalletsFiltersByAccountID(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":25000,
+		"sourceEventId":"console_manual_topup_1",
+		"reason":"initial launch credit"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/billing/wallets?accountId=acct_1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list wallets status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var wallets []wallet.Snapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &wallets); err != nil {
+		t.Fatalf("decode wallets: %v", err)
+	}
+	if len(wallets) != 1 {
+		t.Fatalf("expected 1 wallet, got %d: %+v", len(wallets), wallets)
+	}
+	if wallets[0].AccountID != "acct_1" || wallets[0].BalanceCents != 25000 || wallets[0].AvailableCents != 25000 || wallets[0].TotalRechargedCents != 25000 {
+		t.Fatalf("unexpected wallet snapshot: %+v", wallets[0])
+	}
+}
+
 func TestRequestUsageAPIAppendsIdempotentRequestDebit(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	topup := httptest.NewRecorder()

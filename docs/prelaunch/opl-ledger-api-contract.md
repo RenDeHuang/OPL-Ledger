@@ -73,6 +73,35 @@ Persistence requirements:
 - `audit_events` records `account.credit_granted`.
 - PostgreSQL path performs these writes in one SQL transaction.
 
+### `GET /api/v1/billing/wallets`
+
+Purpose: read wallet snapshots for Console billing pages, admin review, and migration reconciliation.
+
+Status: implemented for in-memory and PostgreSQL stores.
+
+Authorization: operator evidence read; when `OPL_LEDGER_ADMIN_TOKEN` is configured, callers must send `Authorization: Bearer <admin-token>`.
+
+Filters:
+
+- `accountId`
+- `userId`
+
+Response:
+
+```json
+[
+  {
+    "userId": "usr_1",
+    "accountId": "acct_1",
+    "balanceCents": 25000,
+    "frozenCents": 0,
+    "availableCents": 25000,
+    "holds": {},
+    "totalRechargedCents": 25000
+  }
+]
+```
+
 ### `GET /api/v1/billing/topups`
 
 Purpose: list manual top-up records for Console/admin review and migration reconciliation.

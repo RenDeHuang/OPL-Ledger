@@ -26,6 +26,7 @@ type Store interface {
 	UpsertRequestQuota(context.Context, RequestQuotaInput) (RequestQuotaRecord, error)
 	ListRequestQuotas(context.Context, RequestQuotaFilter) ([]RequestQuotaRecord, error)
 	ListManualTopUps(context.Context, ManualTopUpFilter) ([]ManualTopUp, error)
+	ListWallets(context.Context, WalletFilter) ([]wallet.Snapshot, error)
 	ListWalletTransactions(context.Context, WalletTransactionFilter) ([]wallet.Transaction, error)
 	AppendAuditEvent(context.Context, AuditEventInput) (AuditEvent, error)
 	ListAuditEvents(context.Context, AuditEventFilter) ([]AuditEvent, error)
@@ -1346,6 +1347,21 @@ func (s *PostgresStore) ListManualTopUps(ctx context.Context, filter ManualTopUp
 	return scanManualTopUps(rows)
 }
 
+func (s *PostgresStore) ListWallets(ctx context.Context, filter WalletFilter) ([]wallet.Snapshot, error) {
+	where, args := walletWhere(filter)
+	query := `SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds, created_at, updated_at FROM wallets`
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanWalletSnapshots(rows)
+}
+
 func (s *PostgresStore) AppendAuditEvent(ctx context.Context, input AuditEventInput) (AuditEvent, error) {
 	event, err := auditlog.NewEvent(input)
 	if err != nil {
@@ -1895,6 +1911,21 @@ func scanWallet(scanner walletScanner) (wallet.Wallet, error) {
 	return w, nil
 }
 
+func scanWalletSnapshots(rows *sql.Rows) ([]wallet.Snapshot, error) {
+	var snapshots []wallet.Snapshot
+	for rows.Next() {
+		w, err := scanWallet(rows)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, w.Snapshot())
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return snapshots, nil
+}
+
 func loadWalletTransactionBySource(ctx context.Context, tx *sql.Tx, sourceEventID string) (wallet.Transaction, error) {
 	row := tx.QueryRowContext(ctx, `
 		SELECT payload
@@ -2368,6 +2399,21 @@ func manualTopUpWhere(filter ManualTopUpFilter) (string, []any) {
 	add("operator_account_id", filter.OperatorAccountID)
 	add("source_event_id", filter.SourceEventID)
 	add("status", filter.Status)
+	return strings.Join(clauses, " AND "), args
+}
+
+func walletWhere(filter WalletFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	add := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	add("account_id", filter.AccountID)
+	add("user_id", filter.UserID)
 	return strings.Join(clauses, " AND "), args
 }
 
