@@ -237,8 +237,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `internal/ledger/postgres_store_test.go`
 - Modify: `internal/ledger/postgres_store.go`
 
-- [ ] Test same `accountId/workspaceId/taskId/sourceEventId` returns existing receipt.
-- [ ] Test conflicting task receipt returns conflict.
+- [x] Test same `accountId/workspaceId/taskId/sourceEventId` returns existing receipt.
+- [x] Test conflicting task receipt returns conflict.
 
 ### Task 22: Add Workspace Ownership Validation Hook
 

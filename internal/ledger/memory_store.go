@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"reflect"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ type MemoryStore struct {
 	requestUsageBySource  map[string]RequestUsageResult
 	requestUsageByRequest map[string]RequestUsageResult
 	auditBySourceEvent    map[string]AuditEvent
+	taskReceiptBySource   map[string]TaskReceipt
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -44,6 +46,7 @@ func NewMemoryStore() *MemoryStore {
 		requestUsageBySource:  map[string]RequestUsageResult{},
 		requestUsageByRequest: map[string]RequestUsageResult{},
 		auditBySourceEvent:    map[string]AuditEvent{},
+		taskReceiptBySource:   map[string]TaskReceipt{},
 	}
 }
 
@@ -551,40 +554,21 @@ func (s *MemoryStore) Summary(ctx context.Context, filter EntryFilter) (Summary,
 }
 
 func (s *MemoryStore) AppendTaskReceipt(_ context.Context, input TaskReceiptInput) (TaskReceipt, error) {
-	if input.AccountID == "" {
-		return TaskReceipt{}, errors.New("task_evidence_account_required")
-	}
-	if input.TaskID == "" {
-		return TaskReceipt{}, errors.New("task_evidence_task_required")
-	}
-	if len(input.Plan) == 0 {
-		return TaskReceipt{}, errors.New("task_evidence_plan_required")
-	}
-	if len(input.Approval) == 0 {
-		return TaskReceipt{}, errors.New("task_evidence_approval_required")
-	}
-	if len(input.Environment) == 0 {
-		return TaskReceipt{}, errors.New("task_evidence_environment_required")
+	receipt, err := newTaskReceipt(input, time.Now().UTC())
+	if err != nil {
+		return TaskReceipt{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	receipt := TaskReceipt{
-		ID:            randomID(),
-		Type:          "task.evidence.v1",
-		AccountID:     input.AccountID,
-		WorkspaceID:   input.WorkspaceID,
-		TaskID:        input.TaskID,
-		Actor:         mapOrDefault(input.Actor, map[string]any{"type": "system", "id": "opl-ledger"}),
-		Plan:          cloneMap(input.Plan),
-		Approval:      cloneMap(input.Approval),
-		Environment:   cloneMap(input.Environment),
-		InputRefs:     cloneMapSlice(input.InputRefs),
-		ExecutionRefs: cloneMapSlice(input.ExecutionRefs),
-		OutputRefs:    cloneMapSlice(input.OutputRefs),
-		ReviewResults: cloneMapSlice(input.ReviewResults),
-		Continuation:  cloneMap(input.Continuation),
-		Metadata:      cloneMap(input.Metadata),
-		CreatedAt:     time.Now().UTC(),
+	if receipt.SourceEventID != "" {
+		key := taskReceiptSourceKey(receipt.AccountID, receipt.WorkspaceID, receipt.TaskID, receipt.SourceEventID)
+		if existing, ok := s.taskReceiptBySource[key]; ok {
+			if !sameTaskReceiptReplay(existing, receipt) {
+				return TaskReceipt{}, ErrIdempotencyConflict
+			}
+			return existing, nil
+		}
+		s.taskReceiptBySource[key] = receipt
 	}
 	s.taskReceipts = append(s.taskReceipts, receipt)
 	return receipt, nil
@@ -694,6 +678,65 @@ func cloneMapSlice(value []map[string]any) []map[string]any {
 func cloneAuditEvent(event AuditEvent) AuditEvent {
 	event.Payload = cloneMap(event.Payload)
 	return event
+}
+
+func newTaskReceipt(input TaskReceiptInput, createdAt time.Time) (TaskReceipt, error) {
+	if input.AccountID == "" {
+		return TaskReceipt{}, errors.New("task_evidence_account_required")
+	}
+	if input.TaskID == "" {
+		return TaskReceipt{}, errors.New("task_evidence_task_required")
+	}
+	if len(input.Plan) == 0 {
+		return TaskReceipt{}, errors.New("task_evidence_plan_required")
+	}
+	if len(input.Approval) == 0 {
+		return TaskReceipt{}, errors.New("task_evidence_approval_required")
+	}
+	if len(input.Environment) == 0 {
+		return TaskReceipt{}, errors.New("task_evidence_environment_required")
+	}
+	return TaskReceipt{
+		ID:            randomID(),
+		Type:          "task.evidence.v1",
+		AccountID:     input.AccountID,
+		WorkspaceID:   input.WorkspaceID,
+		TaskID:        input.TaskID,
+		SourceEventID: input.SourceEventID,
+		Actor:         mapOrDefault(input.Actor, map[string]any{"type": "system", "id": "opl-ledger"}),
+		Plan:          cloneMap(input.Plan),
+		Approval:      cloneMap(input.Approval),
+		Environment:   cloneMap(input.Environment),
+		InputRefs:     cloneMapSlice(input.InputRefs),
+		ExecutionRefs: cloneMapSlice(input.ExecutionRefs),
+		OutputRefs:    cloneMapSlice(input.OutputRefs),
+		ReviewResults: cloneMapSlice(input.ReviewResults),
+		Continuation:  cloneMap(input.Continuation),
+		Metadata:      cloneMap(input.Metadata),
+		CreatedAt:     createdAt,
+	}, nil
+}
+
+func taskReceiptSourceKey(accountID string, workspaceID string, taskID string, sourceEventID string) string {
+	return accountID + "\x00" + workspaceID + "\x00" + taskID + "\x00" + sourceEventID
+}
+
+func sameTaskReceiptReplay(existing TaskReceipt, replay TaskReceipt) bool {
+	return existing.Type == replay.Type &&
+		existing.AccountID == replay.AccountID &&
+		existing.WorkspaceID == replay.WorkspaceID &&
+		existing.TaskID == replay.TaskID &&
+		existing.SourceEventID == replay.SourceEventID &&
+		reflect.DeepEqual(existing.Actor, replay.Actor) &&
+		reflect.DeepEqual(existing.Plan, replay.Plan) &&
+		reflect.DeepEqual(existing.Approval, replay.Approval) &&
+		reflect.DeepEqual(existing.Environment, replay.Environment) &&
+		reflect.DeepEqual(existing.InputRefs, replay.InputRefs) &&
+		reflect.DeepEqual(existing.ExecutionRefs, replay.ExecutionRefs) &&
+		reflect.DeepEqual(existing.OutputRefs, replay.OutputRefs) &&
+		reflect.DeepEqual(existing.ReviewResults, replay.ReviewResults) &&
+		reflect.DeepEqual(existing.Continuation, replay.Continuation) &&
+		reflect.DeepEqual(existing.Metadata, replay.Metadata)
 }
 
 func randomID() string {

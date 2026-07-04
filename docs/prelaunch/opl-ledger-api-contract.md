@@ -91,7 +91,9 @@ Purpose: return latest stored reconciliation report.
 
 Purpose: record task evidence receipt.
 
-Status: implemented, idempotency still planned.
+Status: implemented with PostgreSQL idempotency for `accountId + workspaceId + taskId + sourceEventId`.
+
+Idempotency: when `sourceEventId` is supplied, exact replay returns the existing receipt. Replay with the same idempotency tuple and different payload returns `409 Conflict`.
 
 ### `GET /api/v1/ledger/task-receipts`
 

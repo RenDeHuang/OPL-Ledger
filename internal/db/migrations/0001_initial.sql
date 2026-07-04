@@ -58,11 +58,16 @@ CREATE TABLE IF NOT EXISTS task_receipts (
   account_id TEXT NOT NULL,
   workspace_id TEXT,
   task_id TEXT NOT NULL,
+  source_event_id TEXT,
   receipt_type TEXT NOT NULL,
   status TEXT NOT NULL,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS task_receipts_source_event_idx
+  ON task_receipts(account_id, COALESCE(workspace_id, ''), task_id, source_event_id)
+  WHERE source_event_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS wallets (
   id TEXT PRIMARY KEY,

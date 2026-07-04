@@ -130,7 +130,7 @@ Implemented:
 - resource usage log business shape for compute/storage usage with workspace/resource ids;
 - audit events append/list API backed by PostgreSQL and in-memory stores;
 - evidence records append/list API backed by PostgreSQL and in-memory stores; evidence records stay out of billing ledger entries;
-- task receipt record/query;
+- task receipt record/query with PostgreSQL `accountId/workspaceId/taskId/sourceEventId` idempotency;
 - reconciliation submit/latest;
 - Tencent reconciliation primitive;
 - read-only Deployment evidence collector primitive;

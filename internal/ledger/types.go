@@ -68,6 +68,7 @@ type TaskReceiptInput struct {
 	AccountID     string           `json:"accountId"`
 	WorkspaceID   string           `json:"workspaceId,omitempty"`
 	TaskID        string           `json:"taskId"`
+	SourceEventID string           `json:"sourceEventId,omitempty"`
 	Actor         map[string]any   `json:"actor,omitempty"`
 	Plan          map[string]any   `json:"plan"`
 	Approval      map[string]any   `json:"approval"`
@@ -86,6 +87,7 @@ type TaskReceipt struct {
 	AccountID     string           `json:"accountId"`
 	WorkspaceID   string           `json:"workspaceId,omitempty"`
 	TaskID        string           `json:"taskId"`
+	SourceEventID string           `json:"sourceEventId,omitempty"`
 	Actor         map[string]any   `json:"actor"`
 	Plan          map[string]any   `json:"plan"`
 	Approval      map[string]any   `json:"approval"`

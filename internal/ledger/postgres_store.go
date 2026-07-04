@@ -1163,50 +1163,34 @@ func (s *PostgresStore) Summary(ctx context.Context, filter EntryFilter) (Summar
 }
 
 func (s *PostgresStore) AppendTaskReceipt(ctx context.Context, input TaskReceiptInput) (TaskReceipt, error) {
-	if input.AccountID == "" {
-		return TaskReceipt{}, errors.New("task_evidence_account_required")
+	receipt, err := newTaskReceipt(input, time.Now().UTC())
+	if err != nil {
+		return TaskReceipt{}, err
 	}
-	if input.TaskID == "" {
-		return TaskReceipt{}, errors.New("task_evidence_task_required")
-	}
-	if len(input.Plan) == 0 {
-		return TaskReceipt{}, errors.New("task_evidence_plan_required")
-	}
-	if len(input.Approval) == 0 {
-		return TaskReceipt{}, errors.New("task_evidence_approval_required")
-	}
-	if len(input.Environment) == 0 {
-		return TaskReceipt{}, errors.New("task_evidence_environment_required")
-	}
-	receipt := TaskReceipt{
-		ID:            randomID(),
-		Type:          "task.evidence.v1",
-		AccountID:     input.AccountID,
-		WorkspaceID:   input.WorkspaceID,
-		TaskID:        input.TaskID,
-		Actor:         mapOrDefault(input.Actor, map[string]any{"type": "system", "id": "opl-ledger"}),
-		Plan:          cloneMap(input.Plan),
-		Approval:      cloneMap(input.Approval),
-		Environment:   cloneMap(input.Environment),
-		InputRefs:     cloneMapSlice(input.InputRefs),
-		ExecutionRefs: cloneMapSlice(input.ExecutionRefs),
-		OutputRefs:    cloneMapSlice(input.OutputRefs),
-		ReviewResults: cloneMapSlice(input.ReviewResults),
-		Continuation:  cloneMap(input.Continuation),
-		Metadata:      cloneMap(input.Metadata),
-		CreatedAt:     time.Now().UTC(),
+	if receipt.SourceEventID != "" {
+		existing, found, err := s.loadTaskReceiptBySource(ctx, receipt.AccountID, receipt.WorkspaceID, receipt.TaskID, receipt.SourceEventID)
+		if err != nil {
+			return TaskReceipt{}, err
+		}
+		if found {
+			if !sameTaskReceiptReplay(existing, receipt) {
+				return TaskReceipt{}, ErrIdempotencyConflict
+			}
+			return existing, nil
+		}
 	}
 	payload, err := json.Marshal(receipt)
 	if err != nil {
 		return TaskReceipt{}, err
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO task_receipts (id, account_id, workspace_id, task_id, receipt_type, status, payload, created_at)
-		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, $8)`,
+		INSERT INTO task_receipts (id, account_id, workspace_id, task_id, source_event_id, receipt_type, status, payload, created_at)
+		VALUES ($1, $2, NULLIF($3, ''), $4, NULLIF($5, ''), $6, $7, $8, $9)`,
 		receipt.ID,
 		receipt.AccountID,
 		receipt.WorkspaceID,
 		receipt.TaskID,
+		receipt.SourceEventID,
 		receipt.Type,
 		"recorded",
 		payload,
@@ -1216,6 +1200,36 @@ func (s *PostgresStore) AppendTaskReceipt(ctx context.Context, input TaskReceipt
 		return TaskReceipt{}, err
 	}
 	return receipt, nil
+}
+
+func (s *PostgresStore) loadTaskReceiptBySource(ctx context.Context, accountID string, workspaceID string, taskID string, sourceEventID string) (TaskReceipt, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT payload
+		FROM task_receipts
+		WHERE account_id = $1
+			AND COALESCE(workspace_id, '') = $2
+			AND task_id = $3
+			AND source_event_id = $4
+		ORDER BY created_at, id
+		LIMIT 1`,
+		accountID,
+		workspaceID,
+		taskID,
+		sourceEventID,
+	)
+	var payload []byte
+	err := row.Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TaskReceipt{}, false, nil
+	}
+	if err != nil {
+		return TaskReceipt{}, false, err
+	}
+	var receipt TaskReceipt
+	if err := json.Unmarshal(payload, &receipt); err != nil {
+		return TaskReceipt{}, false, err
+	}
+	return receipt, true, nil
 }
 
 func (s *PostgresStore) ListTaskReceipts(ctx context.Context, filter TaskReceiptFilter) ([]TaskReceipt, error) {

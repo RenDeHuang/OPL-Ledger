@@ -378,6 +378,91 @@ func TestPostgresStoreListEvidenceRecordsFiltersByAccountWorkspaceTypeAndSourceE
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreAppendTaskReceiptReplaysExistingSourceEvent(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	existing := TaskReceipt{
+		ID:            "task_receipt_1",
+		Type:          "task.evidence.v1",
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		TaskID:        "task_1",
+		SourceEventID: "task_source_1",
+		Actor:         map[string]any{"type": "system", "id": "opl-ledger"},
+		Plan:          map[string]any{"goal": "run analysis"},
+		Approval:      map[string]any{"status": "approved"},
+		Environment:   map[string]any{"runtimeProvider": "tencent-tke"},
+		InputRefs:     []map[string]any{},
+		ExecutionRefs: []map[string]any{},
+		OutputRefs:    []map[string]any{},
+		ReviewResults: []map[string]any{},
+		CreatedAt:     createdAt,
+	}
+
+	mock.ExpectQuery(`SELECT payload\s+FROM task_receipts`).
+		WithArgs("acct_1", "ws_1", "task_1", "task_source_1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, existing)))
+
+	receipt, err := store.AppendTaskReceipt(context.Background(), TaskReceiptInput{
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		TaskID:        "task_1",
+		SourceEventID: "task_source_1",
+		Plan:          map[string]any{"goal": "run analysis"},
+		Approval:      map[string]any{"status": "approved"},
+		Environment:   map[string]any{"runtimeProvider": "tencent-tke"},
+	})
+	if err != nil {
+		t.Fatalf("append task receipt replay: %v", err)
+	}
+	if receipt.ID != "task_receipt_1" {
+		t.Fatalf("receipt = %+v", receipt)
+	}
+	assertSQLExpectations(t, mock)
+}
+
+func TestPostgresStoreAppendTaskReceiptRejectsConflictingSourceEventReplay(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	existing := TaskReceipt{
+		ID:            "task_receipt_1",
+		Type:          "task.evidence.v1",
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		TaskID:        "task_1",
+		SourceEventID: "task_source_1",
+		Actor:         map[string]any{"type": "system", "id": "opl-ledger"},
+		Plan:          map[string]any{"goal": "run analysis"},
+		Approval:      map[string]any{"status": "approved"},
+		Environment:   map[string]any{"runtimeProvider": "tencent-tke"},
+		InputRefs:     []map[string]any{},
+		ExecutionRefs: []map[string]any{},
+		OutputRefs:    []map[string]any{},
+		ReviewResults: []map[string]any{},
+		CreatedAt:     createdAt,
+	}
+
+	mock.ExpectQuery(`SELECT payload\s+FROM task_receipts`).
+		WithArgs("acct_1", "ws_1", "task_1", "task_source_1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, existing)))
+
+	_, err := store.AppendTaskReceipt(context.Background(), TaskReceiptInput{
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		TaskID:        "task_1",
+		SourceEventID: "task_source_1",
+		Plan:          map[string]any{"goal": "different analysis"},
+		Approval:      map[string]any{"status": "approved"},
+		Environment:   map[string]any{"runtimeProvider": "tencent-tke"},
+	})
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("expected idempotency conflict, got %v", err)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
