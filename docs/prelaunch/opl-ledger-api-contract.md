@@ -141,6 +141,7 @@ Persistence requirements:
 - Wallet transaction list API.
 - Compute/storage hold create/release APIs. Pricing, hold creation, and hold release business rules are implemented locally; API/PostgreSQL transaction wiring is still planned.
 - Hourly settlement API. Core compute/storage debit calculation, available-balance-first charging, hold capture, hold-exhaustion intents, and no-negative-balance rules are implemented locally; API/PostgreSQL transaction wiring is still planned.
+- Resource usage log API/store wiring. Compute and storage resource usage log shapes are implemented locally with workspace/resource ids.
 - Reconciliation guard API.
 - Audit event append/list API.
 - Evidence record append/list API.

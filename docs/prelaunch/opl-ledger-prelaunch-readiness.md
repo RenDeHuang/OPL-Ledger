@@ -127,6 +127,7 @@ Implemented:
 - 7-day compute/storage prepaid hold pricing calculation for Basic and Pro package inputs;
 - compute/storage hold creation and release business rules with ledger entry and wallet transaction outputs;
 - hourly compute/storage settlement calculation with available-balance-first debit, hold capture, hold-exhaustion intents, idempotent replay input, and no-negative-balance behavior;
+- resource usage log business shape for compute/storage usage with workspace/resource ids;
 - task receipt record/query;
 - reconciliation submit/latest;
 - Tencent reconciliation primitive;
@@ -139,7 +140,7 @@ Not complete:
 - persisted request quota management API; current request usage accepts Console-provided quota snapshots and records the incremented quota in the usage log payload;
 - compute/storage prepaid hold create/release API/PostgreSQL transaction wiring;
 - settlement API/PostgreSQL transaction wiring for compute/storage hourly billing;
-- resource usage logs;
+- resource usage log API/PostgreSQL transaction wiring;
 - reconciliation guard API;
 - audit events API;
 - evidence records API for Workspace lifecycle and storage backup;

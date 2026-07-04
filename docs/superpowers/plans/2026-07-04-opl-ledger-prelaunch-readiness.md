@@ -208,8 +208,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/usage/resource_usage_test.go`
 - Create: `internal/usage/resource_usage.go`
 
-- [ ] Test compute usage log carries `computeId` and `workspaceId`.
-- [ ] Test storage usage log carries `storageId`, `attachmentId`, and `workspaceId`.
+- [x] Test compute usage log carries `computeId` and `workspaceId`.
+- [x] Test storage usage log carries `storageId`, `attachmentId`, and `workspaceId`.
 
 ### Task 19: Implement Audit Event Store
 
