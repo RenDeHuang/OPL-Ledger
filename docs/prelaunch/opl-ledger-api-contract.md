@@ -412,13 +412,13 @@ Purpose: list task receipts by account/workspace/task.
 
 Purpose: record request usage and debit available wallet balance.
 
-Status: implemented for request usage dedup, quota checks, and available-balance billing.
+Status: implemented for request usage dedup, persisted quota checks, caller-provided quota snapshot checks, and available-balance billing.
 
 Source behavior: `/home/dev/medopl-3/packages/console/src/services/billing-service.js#recordRequestUsage`.
 
 Idempotency: `workspaceId + sourceEventId` and `workspaceId + requestId` are replay keys. `requestFingerprint` must match on replay.
 
-Optional request quota input mirrors `medopl-3` user `requestQuota`:
+Optional request quota input mirrors `medopl-3` user `requestQuota`. If omitted and a persisted Ledger quota exists for `accountId + userId + workspaceId`, Ledger uses and increments that persisted quota in the same PostgreSQL transaction as the request usage write.
 
 ```json
 {
@@ -435,16 +435,53 @@ Optional request quota input mirrors `medopl-3` user `requestQuota`:
 
 Persistence requirements:
 
-- `requestQuota` is checked before request usage dedup or wallet mutation.
+- Caller-provided `requestQuota` is checked before request usage dedup or wallet mutation.
+- Persisted quota is loaded after replay dedup with row locking and incremented before wallet mutation, in the same PostgreSQL transaction as the usage write.
 - Quota rejection returns `request_quota_exceeded` and writes no dedup, wallet, ledger, usage, transaction, or audit state.
 - `request_usage_dedup` is inserted before wallet mutation.
 - `wallets` snapshot is debited from available balance only.
 - `request_usage_logs` records requested, charged, and unpaid cents.
-- `request_usage_logs.payload` records the incremented quota when a quota was supplied.
+- `request_usage_logs.payload` records the incremented quota when a caller-provided or persisted quota was used.
 - Positive charged amount writes a `request_debit` ledger entry.
 - Positive charged amount writes a `debit` wallet transaction linked to the usage log and ledger entry.
 - `audit_events` records `billing.request_usage_recorded`.
 - PostgreSQL path performs these writes in one SQL transaction.
+
+### `PUT /api/v1/billing/request-quotas`
+
+Purpose: create or replace the persisted request quota for an account/user/workspace scope.
+
+Request:
+
+```json
+{
+  "accountId": "acct_1",
+  "userId": "usr_1",
+  "workspaceId": "ws_1",
+  "quota": {
+    "limit": 1000,
+    "used": 12,
+    "windowLimit": 100,
+    "windowUsed": 4,
+    "windowSeconds": 3600,
+    "windowStartedAt": "2026-07-04T12:00:00Z"
+  }
+}
+```
+
+Response: persisted `RequestQuotaRecord`.
+
+### `GET /api/v1/billing/request-quotas`
+
+Purpose: list persisted request quota records for operator review and Console synchronization.
+
+Authorization: operator evidence read; when `OPL_LEDGER_ADMIN_TOKEN` is configured, callers must send `Authorization: Bearer <admin-token>`.
+
+Filters:
+
+- `accountId`
+- `userId`
+- `workspaceId`
 
 ### `POST /api/v1/audit/events`
 

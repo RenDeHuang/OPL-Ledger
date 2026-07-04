@@ -303,6 +303,29 @@ type RequestUsageInput struct {
 	RequestQuota       *usage.RequestQuota `json:"requestQuota,omitempty"`
 }
 
+type RequestQuotaInput struct {
+	AccountID   string             `json:"accountId"`
+	UserID      string             `json:"userId"`
+	WorkspaceID string             `json:"workspaceId"`
+	Quota       usage.RequestQuota `json:"quota"`
+}
+
+type RequestQuotaRecord struct {
+	ID          string             `json:"id"`
+	AccountID   string             `json:"accountId"`
+	UserID      string             `json:"userId"`
+	WorkspaceID string             `json:"workspaceId"`
+	Quota       usage.RequestQuota `json:"quota"`
+	CreatedAt   time.Time          `json:"createdAt"`
+	UpdatedAt   time.Time          `json:"updatedAt"`
+}
+
+type RequestQuotaFilter struct {
+	AccountID   string
+	UserID      string
+	WorkspaceID string
+}
+
 type RequestUsageResult struct {
 	Log         RequestUsageLog    `json:"log"`
 	Wallet      wallet.Snapshot    `json:"wallet"`

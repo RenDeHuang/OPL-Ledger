@@ -23,6 +23,8 @@ type Store interface {
 	SettleWorkspaceUsage(context.Context, SettlementInput) (SettlementResult, error)
 	RecordResourceUsage(context.Context, ResourceUsageInput) (ResourceUsageResult, error)
 	RecordRequestUsage(context.Context, RequestUsageInput) (RequestUsageResult, error)
+	UpsertRequestQuota(context.Context, RequestQuotaInput) (RequestQuotaRecord, error)
+	ListRequestQuotas(context.Context, RequestQuotaFilter) ([]RequestQuotaRecord, error)
 	ListWalletTransactions(context.Context, WalletTransactionFilter) ([]wallet.Transaction, error)
 	AppendAuditEvent(context.Context, AuditEventInput) (AuditEvent, error)
 	ListAuditEvents(context.Context, AuditEventFilter) ([]AuditEvent, error)
@@ -933,9 +935,12 @@ func (s *PostgresStore) RecordRequestUsage(ctx context.Context, input RequestUsa
 		}
 	}()
 
-	nextQuota, err := usage.IncrementOptionalRequestQuota(input.RequestQuota, 1, nowUTC())
-	if err != nil {
-		return RequestUsageResult{}, err
+	var nextQuota *usage.RequestQuota
+	if input.RequestQuota != nil {
+		nextQuota, err = usage.IncrementOptionalRequestQuota(input.RequestQuota, 1, nowUTC())
+		if err != nil {
+			return RequestUsageResult{}, err
+		}
 	}
 
 	usageLogID, fingerprint, found, err := s.requestUsageDedup(ctx, tx, input.WorkspaceID, sourceEventID, input.RequestID)
@@ -963,6 +968,12 @@ func (s *PostgresStore) RecordRequestUsage(ctx context.Context, input RequestUsa
 		accountID = "acct-" + input.WorkspaceID
 	}
 	createdAt := nowUTC()
+	if input.RequestQuota == nil {
+		nextQuota, err = s.incrementPersistedRequestQuota(ctx, tx, accountID, input.UserID, input.WorkspaceID, createdAt)
+		if err != nil {
+			return RequestUsageResult{}, err
+		}
+	}
 	logID := randomScopedID("usage")
 	dedupID := randomScopedID("dedup")
 	_, err = tx.ExecContext(ctx, `
@@ -1243,6 +1254,62 @@ func (s *PostgresStore) RecordRequestUsage(ctx context.Context, input RequestUsa
 		AuditEvent:  audit,
 		Created:     true,
 	}, nil
+}
+
+func (s *PostgresStore) UpsertRequestQuota(ctx context.Context, input RequestQuotaInput) (RequestQuotaRecord, error) {
+	if err := validateRequestQuotaInput(input); err != nil {
+		return RequestQuotaRecord{}, err
+	}
+	now := nowUTC()
+	record := RequestQuotaRecord{
+		ID:          randomScopedID("quota"),
+		AccountID:   input.AccountID,
+		UserID:      input.UserID,
+		WorkspaceID: input.WorkspaceID,
+		Quota:       input.Quota,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	payload, err := json.Marshal(record.Quota)
+	if err != nil {
+		return RequestQuotaRecord{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO request_quotas (
+			id, account_id, user_id, workspace_id, quota, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7
+		)
+		ON CONFLICT (account_id, user_id, workspace_id) DO UPDATE SET
+			quota = EXCLUDED.quota,
+			updated_at = EXCLUDED.updated_at`,
+		record.ID,
+		record.AccountID,
+		record.UserID,
+		record.WorkspaceID,
+		payload,
+		record.CreatedAt,
+		record.UpdatedAt,
+	)
+	if err != nil {
+		return RequestQuotaRecord{}, err
+	}
+	return record, nil
+}
+
+func (s *PostgresStore) ListRequestQuotas(ctx context.Context, filter RequestQuotaFilter) ([]RequestQuotaRecord, error) {
+	where, args := requestQuotaWhere(filter)
+	query := `SELECT id, account_id, user_id, workspace_id, quota, created_at, updated_at FROM request_quotas`
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	query += ` ORDER BY account_id, user_id, workspace_id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRequestQuotaRecords(rows)
 }
 
 func (s *PostgresStore) ListWalletTransactions(ctx context.Context, filter WalletTransactionFilter) ([]wallet.Transaction, error) {
@@ -1548,6 +1615,48 @@ func loadRequestUsageLogByID(ctx context.Context, tx *sql.Tx, id string) (Reques
 	return log, nil
 }
 
+func (s *PostgresStore) incrementPersistedRequestQuota(ctx context.Context, tx *sql.Tx, accountID string, userID string, workspaceID string, now time.Time) (*usage.RequestQuota, error) {
+	if userID == "" {
+		return nil, nil
+	}
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, account_id, user_id, workspace_id, quota, created_at, updated_at
+		FROM request_quotas
+		WHERE account_id = $1 AND user_id = $2 AND workspace_id = $3
+		FOR UPDATE`,
+		accountID,
+		userID,
+		workspaceID,
+	)
+	record, err := scanRequestQuotaRecord(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	next, err := usage.IncrementRequestQuota(record.Quota, 1, now)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(next)
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE request_quotas
+		SET quota = $1, updated_at = $2
+		WHERE id = $3`,
+		payload,
+		now,
+		record.ID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &next, nil
+}
+
 func (s *PostgresStore) loadResourceUsageBySource(ctx context.Context, sourceEventID string) (usage.ResourceUsageLog, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT payload
@@ -1789,6 +1898,46 @@ func scanWalletTransactions(rows *sql.Rows) ([]wallet.Transaction, error) {
 		return nil, err
 	}
 	return transactions, nil
+}
+
+func scanRequestQuotaRecords(rows *sql.Rows) ([]RequestQuotaRecord, error) {
+	var records []RequestQuotaRecord
+	for rows.Next() {
+		record, err := scanRequestQuotaRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func scanRequestQuotaRecord(scanner interface {
+	Scan(dest ...any) error
+}) (RequestQuotaRecord, error) {
+	var record RequestQuotaRecord
+	var payload []byte
+	err := scanner.Scan(
+		&record.ID,
+		&record.AccountID,
+		&record.UserID,
+		&record.WorkspaceID,
+		&payload,
+		&record.CreatedAt,
+		&record.UpdatedAt,
+	)
+	if err != nil {
+		return RequestQuotaRecord{}, err
+	}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &record.Quota); err != nil {
+			return RequestQuotaRecord{}, err
+		}
+	}
+	return record, nil
 }
 
 func scanReconciliationReports(rows *sql.Rows) ([]ReconciliationReport, error) {
@@ -2147,6 +2296,22 @@ func walletTransactionWhere(filter WalletTransactionFilter) (string, []any) {
 	add("ledger_entry_id", filter.LedgerEntryID)
 	add("usage_log_id", filter.UsageLogID)
 	add("funding_source", filter.FundingSource)
+	return strings.Join(clauses, " AND "), args
+}
+
+func requestQuotaWhere(filter RequestQuotaFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	add := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	add("account_id", filter.AccountID)
+	add("user_id", filter.UserID)
+	add("workspace_id", filter.WorkspaceID)
 	return strings.Join(clauses, " AND "), args
 }
 

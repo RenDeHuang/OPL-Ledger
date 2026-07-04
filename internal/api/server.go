@@ -65,6 +65,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/billing/settlements", s.settleWorkspaceUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/resource-usage", s.recordResourceUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/request-usage", s.recordRequestUsage)
+	s.mux.HandleFunc("PUT /api/v1/billing/request-quotas", s.upsertRequestQuota)
+	s.mux.HandleFunc("GET /api/v1/billing/request-quotas", s.listRequestQuotas)
 	s.mux.HandleFunc("POST /api/v1/billing/reconciliation", s.recordReconciliation)
 	s.mux.HandleFunc("GET /api/v1/billing/reconciliation", s.listReconciliation)
 	s.mux.HandleFunc("GET /api/v1/billing/reconciliation/latest", s.latestReconciliation)
@@ -282,6 +284,40 @@ func (s *Server) recordRequestUsage(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, result)
+}
+
+func (s *Server) upsertRequestQuota(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
+	var input ledger.RequestQuotaInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
+		return
+	}
+	record, err := s.store.UpsertRequestQuota(r.Context(), input)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}
+
+func (s *Server) listRequestQuotas(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	q := r.URL.Query()
+	records, err := s.store.ListRequestQuotas(r.Context(), ledger.RequestQuotaFilter{
+		AccountID:   q.Get("accountId"),
+		UserID:      q.Get("userId"),
+		WorkspaceID: q.Get("workspaceId"),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, records)
 }
 
 func (s *Server) recordTaskReceipt(w http.ResponseWriter, r *http.Request) {

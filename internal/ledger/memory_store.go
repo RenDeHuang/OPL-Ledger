@@ -37,6 +37,7 @@ type MemoryStore struct {
 	resourceUsageBySource map[string]ResourceUsageResult
 	requestUsageBySource  map[string]RequestUsageResult
 	requestUsageByRequest map[string]RequestUsageResult
+	requestQuotas         map[string]RequestQuotaRecord
 	auditBySourceEvent    map[string]AuditEvent
 	taskReceiptBySource   map[string]TaskReceipt
 }
@@ -53,6 +54,7 @@ func NewMemoryStore() *MemoryStore {
 		resourceUsageBySource: map[string]ResourceUsageResult{},
 		requestUsageBySource:  map[string]RequestUsageResult{},
 		requestUsageByRequest: map[string]RequestUsageResult{},
+		requestQuotas:         map[string]RequestQuotaRecord{},
 		auditBySourceEvent:    map[string]AuditEvent{},
 		taskReceiptBySource:   map[string]TaskReceipt{},
 	}
@@ -599,10 +601,6 @@ func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageIn
 	if input.AmountCents < 0 {
 		return RequestUsageResult{}, errors.New("non_negative_amount_required")
 	}
-	nextQuota, err := usage.IncrementOptionalRequestQuota(input.RequestQuota, 1, time.Now().UTC())
-	if err != nil {
-		return RequestUsageResult{}, err
-	}
 	sourceEventID := input.SourceEventID
 	if sourceEventID == "" {
 		sourceEventID = "gateway_request:" + input.RequestID
@@ -630,6 +628,11 @@ func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageIn
 	if accountID == "" {
 		accountID = "acct-" + input.WorkspaceID
 	}
+	now := time.Now().UTC()
+	nextQuota, err := s.incrementRequestQuotaLocked(accountID, input.UserID, input.WorkspaceID, input.RequestQuota, now)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
 	w := s.wallets[accountID]
 	if w.AccountID == "" {
 		w.AccountID = accountID
@@ -641,7 +644,7 @@ func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageIn
 	before := w.Snapshot()
 	charge := w.Charge("", input.AmountCents)
 	after := w.Snapshot()
-	createdAt := time.Now().UTC()
+	createdAt := now
 
 	var entry Entry
 	var transaction wallet.Transaction
@@ -745,6 +748,65 @@ func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageIn
 	s.requestUsageBySource[sourceEventID] = result
 	s.requestUsageByRequest[requestKey] = result
 	return result, nil
+}
+
+func (s *MemoryStore) incrementRequestQuotaLocked(accountID string, userID string, workspaceID string, requestQuota *usage.RequestQuota, now time.Time) (*usage.RequestQuota, error) {
+	if requestQuota != nil {
+		return usage.IncrementOptionalRequestQuota(requestQuota, 1, now)
+	}
+	if userID == "" {
+		return nil, nil
+	}
+	key := requestQuotaKey(accountID, userID, workspaceID)
+	record, ok := s.requestQuotas[key]
+	if !ok {
+		return nil, nil
+	}
+	next, err := usage.IncrementRequestQuota(record.Quota, 1, now)
+	if err != nil {
+		return nil, err
+	}
+	record.Quota = next
+	record.UpdatedAt = now
+	s.requestQuotas[key] = record
+	return &next, nil
+}
+
+func (s *MemoryStore) UpsertRequestQuota(_ context.Context, input RequestQuotaInput) (RequestQuotaRecord, error) {
+	if err := validateRequestQuotaInput(input); err != nil {
+		return RequestQuotaRecord{}, err
+	}
+	now := time.Now().UTC()
+	key := requestQuotaKey(input.AccountID, input.UserID, input.WorkspaceID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.requestQuotas[key]
+	if !ok {
+		record = RequestQuotaRecord{
+			ID:          randomScopedID("quota"),
+			AccountID:   input.AccountID,
+			UserID:      input.UserID,
+			WorkspaceID: input.WorkspaceID,
+			CreatedAt:   now,
+		}
+	}
+	record.Quota = input.Quota
+	record.UpdatedAt = now
+	s.requestQuotas[key] = record
+	return record, nil
+}
+
+func (s *MemoryStore) ListRequestQuotas(_ context.Context, filter RequestQuotaFilter) ([]RequestQuotaRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []RequestQuotaRecord
+	for _, record := range s.requestQuotas {
+		if !matchesRequestQuota(record, filter) {
+			continue
+		}
+		out = append(out, record)
+	}
+	return out, nil
 }
 
 func (s *MemoryStore) ListWalletTransactions(_ context.Context, filter WalletTransactionFilter) ([]wallet.Transaction, error) {

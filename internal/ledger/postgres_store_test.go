@@ -561,6 +561,92 @@ func TestPostgresStoreListReconciliationReportsFiltersByProviderAndStatus(t *tes
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreUpsertRequestQuotaPersistsQuota(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	limit := int64(1)
+
+	mock.ExpectExec(`INSERT INTO request_quotas`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	record, err := store.UpsertRequestQuota(context.Background(), RequestQuotaInput{
+		AccountID:   "acct_1",
+		UserID:      "usr_1",
+		WorkspaceID: "ws_1",
+		Quota:       usage.RequestQuota{Limit: &limit},
+	})
+	if err != nil {
+		t.Fatalf("upsert request quota: %v", err)
+	}
+	if record.ID == "" || record.Quota.Limit == nil || *record.Quota.Limit != 1 {
+		t.Fatalf("record = %+v", record)
+	}
+	assertSQLExpectations(t, mock)
+}
+
+func TestPostgresStoreRecordRequestUsageUsesPersistedQuotaInTransaction(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	quotaLimit := int64(1)
+	storedQuota := usage.RequestQuota{Limit: &quotaLimit, Used: 0}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT usage_log_id, request_fingerprint\s+FROM request_usage_dedup`).
+		WithArgs("ws_1", "gateway_req_1", "req_1").
+		WillReturnRows(sqlmock.NewRows([]string{"usage_log_id", "request_fingerprint"}))
+	mock.ExpectQuery(`SELECT id, account_id, user_id, workspace_id, quota, created_at, updated_at\s+FROM request_quotas`).
+		WithArgs("acct_1", "usr_1", "ws_1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "account_id", "user_id", "workspace_id", "quota", "created_at", "updated_at"}).
+			AddRow("quota_1", "acct_1", "usr_1", "ws_1", mustJSON(t, storedQuota), createdAt, createdAt))
+	mock.ExpectExec(`UPDATE request_quotas`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "quota_1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO request_usage_dedup`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "req_1", "gateway_req_1", "fp_1", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds`).
+		WithArgs("acct_1").
+		WillReturnRows(walletRows().AddRow("wal_1", "usr_1", "acct_1", int64(1000), int64(0), int64(1000), []byte(`{}`), createdAt, createdAt))
+	mock.ExpectExec(`INSERT INTO ledger_entries`).
+		WithArgs(sqlmock.AnyArg(), "request_debit", "acct_1", "usr_1", "ws_1", "", "", "", "gateway_req_1", "fp_1", int64(-25), "CNY", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallet_transactions`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "debit", int64(-25), "CNY", "gateway_req_1", sqlmock.AnyArg(), sqlmock.AnyArg(), "available_balance", int64(1000), int64(975), int64(0), int64(0), int64(975), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO request_usage_logs`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "req_1", "gateway_req_1", "fp_1", "", "", int64(0), int64(0), int64(25), int64(25), int64(0), "CNY", sqlmock.AnyArg(), int64(1), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE request_usage_dedup`).
+		WithArgs("acct_1", "usr_1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO audit_events`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "ws_1", "usr_1", "billing.request_usage_recorded", "request_usage", sqlmock.AnyArg(), "gateway_req_1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(sqlmock.AnyArg(), "usr_1", "acct_1", int64(975), int64(0), int64(1000), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := store.RecordRequestUsage(context.Background(), RequestUsageInput{
+		AccountID:          "acct_1",
+		UserID:             "usr_1",
+		WorkspaceID:        "ws_1",
+		RequestID:          "req_1",
+		AmountCents:        25,
+		SourceEventID:      "gateway_req_1",
+		RequestFingerprint: "fp_1",
+	})
+	if err != nil {
+		t.Fatalf("record request usage: %v", err)
+	}
+	if result.Log.Quota == nil || result.Log.Quota.Used != 1 {
+		t.Fatalf("quota result = %+v", result.Log.Quota)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreAppendEvidenceRecordCreatesPersistentEvidenceRow(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

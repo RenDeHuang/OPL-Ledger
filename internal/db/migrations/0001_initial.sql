@@ -128,6 +128,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_source_idx
 CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_request_idx
   ON request_usage_dedup(workspace_id, request_id);
 
+CREATE TABLE IF NOT EXISTS request_quotas (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  quota JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS request_quotas_scope_idx
+  ON request_quotas(account_id, user_id, workspace_id);
+
 CREATE TABLE IF NOT EXISTS resource_usage_logs (
   id TEXT PRIMARY KEY,
   account_id TEXT,

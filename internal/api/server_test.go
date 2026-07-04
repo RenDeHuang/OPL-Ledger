@@ -442,6 +442,82 @@ func TestRequestUsageAPIQuotaExceededDoesNotMutateBillingState(t *testing.T) {
 	}
 }
 
+func TestRequestUsageAPIUsesPersistedRequestQuota(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":1000,
+		"reason":"owner_credit_1"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+	quota := putRequestQuota(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"quota":{"limit":1,"used":0}
+	}`))
+	if quota.code != http.StatusOK {
+		t.Fatalf("quota status = %d body=%s", quota.code, quota.body)
+	}
+
+	first := httptest.NewRecorder()
+	server.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/api/v1/billing/request-usage", bytes.NewReader([]byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"requestId":"req_1",
+		"amountCents":25,
+		"sourceEventId":"gateway_req_1"
+	}`))))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first request usage status = %d body=%s", first.Code, first.Body.String())
+	}
+	var firstResult ledger.RequestUsageResult
+	if err := json.Unmarshal(first.Body.Bytes(), &firstResult); err != nil {
+		t.Fatalf("decode first request usage: %v", err)
+	}
+	if firstResult.Log.Quota == nil || firstResult.Log.Quota.Used != 1 {
+		t.Fatalf("expected persisted quota increment, got %+v", firstResult.Log.Quota)
+	}
+
+	second := httptest.NewRecorder()
+	server.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/api/v1/billing/request-usage", bytes.NewReader([]byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"requestId":"req_2",
+		"amountCents":25,
+		"sourceEventId":"gateway_req_2"
+	}`))))
+	if second.Code != http.StatusBadRequest {
+		t.Fatalf("second request usage status = %d body=%s", second.Code, second.Body.String())
+	}
+
+	quotas := getRequestQuotas(t, server, "/api/v1/billing/request-quotas?accountId=acct_1&workspaceId=ws_1")
+	if quotas.code != http.StatusOK {
+		t.Fatalf("get quotas status = %d body=%s", quotas.code, quotas.body)
+	}
+	if len(quotas.records) != 1 || quotas.records[0].Quota.Used != 1 {
+		t.Fatalf("quotas = %+v", quotas.records)
+	}
+
+	summary := httptest.NewRecorder()
+	server.ServeHTTP(summary, httptest.NewRequest(http.MethodGet, "/api/v1/ledger/summary?accountId=acct_1", nil))
+	if summary.Code != http.StatusOK {
+		t.Fatalf("summary status = %d body=%s", summary.Code, summary.Body.String())
+	}
+	var ledgerSummary ledger.Summary
+	if err := json.Unmarshal(summary.Body.Bytes(), &ledgerSummary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if ledgerSummary.BalanceCents != 975 || ledgerSummary.EntryCount != 2 {
+		t.Fatalf("unexpected summary after quota rejection: %+v", ledgerSummary)
+	}
+}
+
 func TestHoldAPIAppendsIdempotentComputeHold(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	topup := postManualTopUp(t, server, []byte(`{
@@ -1001,6 +1077,18 @@ type resourceUsageAPIResponse struct {
 	}
 }
 
+type requestQuotaAPIResponse struct {
+	code   int
+	body   string
+	record ledger.RequestQuotaRecord
+}
+
+type requestQuotasAPIResponse struct {
+	code    int
+	body    string
+	records []ledger.RequestQuotaRecord
+}
+
 type walletTransactionsAPIResponse struct {
 	code         int
 	body         string
@@ -1015,6 +1103,32 @@ func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppen
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.entry); err != nil {
 			t.Fatalf("decode append response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func putRequestQuota(t *testing.T, server http.Handler, body []byte) requestQuotaAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/billing/request-quotas", bytes.NewReader(body)))
+	response := requestQuotaAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusOK || rec.Code == http.StatusCreated {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.record); err != nil {
+			t.Fatalf("decode request quota response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func getRequestQuotas(t *testing.T, server http.Handler, target string) requestQuotasAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	response := requestQuotasAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.records); err != nil {
+			t.Fatalf("decode request quotas response: %v body=%s", err, rec.Body.String())
 		}
 	}
 	return response
