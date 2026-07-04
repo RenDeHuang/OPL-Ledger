@@ -23,6 +23,7 @@ type Store interface {
 	SettleWorkspaceUsage(context.Context, SettlementInput) (SettlementResult, error)
 	RecordResourceUsage(context.Context, ResourceUsageInput) (ResourceUsageResult, error)
 	RecordRequestUsage(context.Context, RequestUsageInput) (RequestUsageResult, error)
+	ListRequestUsage(context.Context, RequestUsageFilter) ([]RequestUsageLog, error)
 	UpsertRequestQuota(context.Context, RequestQuotaInput) (RequestQuotaRecord, error)
 	ListRequestQuotas(context.Context, RequestQuotaFilter) ([]RequestQuotaRecord, error)
 	ListManualTopUps(context.Context, ManualTopUpFilter) ([]ManualTopUp, error)
@@ -1347,6 +1348,21 @@ func (s *PostgresStore) ListManualTopUps(ctx context.Context, filter ManualTopUp
 	return scanManualTopUps(rows)
 }
 
+func (s *PostgresStore) ListRequestUsage(ctx context.Context, filter RequestUsageFilter) ([]RequestUsageLog, error) {
+	where, args := requestUsageWhere(filter)
+	query := `SELECT payload FROM request_usage_logs`
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRequestUsageLogs(rows)
+}
+
 func (s *PostgresStore) ListWallets(ctx context.Context, filter WalletFilter) ([]wallet.Snapshot, error) {
 	where, args := walletWhere(filter)
 	query := `SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds, created_at, updated_at FROM wallets`
@@ -1965,6 +1981,25 @@ func scanWalletTransactions(rows *sql.Rows) ([]wallet.Transaction, error) {
 	return transactions, nil
 }
 
+func scanRequestUsageLogs(rows *sql.Rows) ([]RequestUsageLog, error) {
+	var logs []RequestUsageLog
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var log RequestUsageLog
+		if err := json.Unmarshal(payload, &log); err != nil {
+			return nil, err
+		}
+		logs = append(logs, log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return logs, nil
+}
+
 func scanRequestQuotaRecords(rows *sql.Rows) ([]RequestQuotaRecord, error) {
 	var records []RequestQuotaRecord
 	for rows.Next() {
@@ -2380,6 +2415,28 @@ func walletTransactionWhere(filter WalletTransactionFilter) (string, []any) {
 	add("ledger_entry_id", filter.LedgerEntryID)
 	add("usage_log_id", filter.UsageLogID)
 	add("funding_source", filter.FundingSource)
+	return strings.Join(clauses, " AND "), args
+}
+
+func requestUsageWhere(filter RequestUsageFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	add := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	add("account_id", filter.AccountID)
+	add("user_id", filter.UserID)
+	add("workspace_id", filter.WorkspaceID)
+	add("request_id", filter.RequestID)
+	add("source_event_id", filter.SourceEventID)
+	add("request_fingerprint", filter.RequestFingerprint)
+	add("ledger_entry_id", filter.LedgerEntryID)
+	add("provider", filter.Provider)
+	add("model", filter.Model)
 	return strings.Join(clauses, " AND "), args
 }
 

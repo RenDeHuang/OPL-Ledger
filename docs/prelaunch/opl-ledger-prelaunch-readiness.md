@@ -127,6 +127,7 @@ Implemented:
 - manual top-up API with wallet snapshot, credit ledger entry, wallet transaction, manual topup record, and audit event in one PostgreSQL transaction;
 - manual top-up list API with account/user/operator/source/status filters for Console/admin reads;
 - request usage API with quota check, dedup-first PostgreSQL transaction, available-balance debit, usage log, wallet transaction, and audit event;
+- request usage list API with account/user/workspace/request/source/fingerprint/ledger/provider/model filters for Console/admin reads;
 - persisted request quota management API with account/user/workspace scope and PostgreSQL transaction integration for request usage;
 - 7-day compute/storage prepaid hold pricing calculation for Basic and Pro package inputs;
 - compute/storage hold create/release API with wallet frozen/available updates, ledger entries, wallet transactions, idempotent replay, and PostgreSQL transaction wiring;

@@ -379,3 +379,15 @@ type RequestUsageLog struct {
 	Quota                *usage.RequestQuota `json:"quota,omitempty"`
 	CreatedAt            time.Time           `json:"createdAt"`
 }
+
+type RequestUsageFilter struct {
+	AccountID          string
+	UserID             string
+	WorkspaceID        string
+	RequestID          string
+	SourceEventID      string
+	RequestFingerprint string
+	LedgerEntryID       string
+	Provider           string
+	Model              string
+}

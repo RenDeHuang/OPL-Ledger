@@ -814,6 +814,18 @@ func (s *MemoryStore) ListRequestQuotas(_ context.Context, filter RequestQuotaFi
 	return out, nil
 }
 
+func (s *MemoryStore) ListRequestUsage(_ context.Context, filter RequestUsageFilter) ([]RequestUsageLog, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]RequestUsageLog, 0, len(s.requestUsageLogs))
+	for _, log := range s.requestUsageLogs {
+		if matchesRequestUsageLog(log, filter) {
+			out = append(out, cloneRequestUsageLog(log))
+		}
+	}
+	return out, nil
+}
+
 func (s *MemoryStore) ListWalletTransactions(_ context.Context, filter WalletTransactionFilter) ([]wallet.Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

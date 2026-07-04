@@ -625,6 +625,44 @@ func TestRequestUsageAPIUsesPersistedRequestQuota(t *testing.T) {
 	}
 }
 
+func TestRequestUsageAPIListsUsageLogsForOperatorReview(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":1000,
+		"reason":"owner_credit_1"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+	first := httptest.NewRecorder()
+	server.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/api/v1/billing/request-usage", bytes.NewReader([]byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"requestId":"req_1",
+		"provider":"openai",
+		"model":"gpt-5",
+		"amountCents":25,
+		"sourceEventId":"gateway_req_1"
+	}`))))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("request usage status = %d body=%s", first.Code, first.Body.String())
+	}
+
+	logs := getRequestUsageLogs(t, server, "/api/v1/billing/request-usage?accountId=acct_1&workspaceId=ws_1&sourceEventId=gateway_req_1")
+	if logs.code != http.StatusOK {
+		t.Fatalf("list request usage status = %d body=%s", logs.code, logs.body)
+	}
+	if len(logs.logs) != 1 {
+		t.Fatalf("logs = %+v", logs.logs)
+	}
+	if logs.logs[0].RequestID != "req_1" || logs.logs[0].AmountCents != 25 || logs.logs[0].SourceEventID != "gateway_req_1" {
+		t.Fatalf("request usage log = %+v", logs.logs[0])
+	}
+}
+
 func TestHoldAPIAppendsIdempotentComputeHold(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	topup := postManualTopUp(t, server, []byte(`{
@@ -1244,6 +1282,12 @@ type requestQuotasAPIResponse struct {
 	records []ledger.RequestQuotaRecord
 }
 
+type requestUsageLogsAPIResponse struct {
+	code int
+	body string
+	logs []ledger.RequestUsageLog
+}
+
 type walletTransactionsAPIResponse struct {
 	code         int
 	body         string
@@ -1284,6 +1328,19 @@ func getRequestQuotas(t *testing.T, server http.Handler, target string) requestQ
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.records); err != nil {
 			t.Fatalf("decode request quotas response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func getRequestUsageLogs(t *testing.T, server http.Handler, target string) requestUsageLogsAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	response := requestUsageLogsAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.logs); err != nil {
+			t.Fatalf("decode request usage logs response: %v body=%s", err, rec.Body.String())
 		}
 	}
 	return response

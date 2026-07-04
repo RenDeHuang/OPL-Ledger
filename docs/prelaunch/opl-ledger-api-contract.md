@@ -496,6 +496,26 @@ Persistence requirements:
 - `audit_events` records `billing.request_usage_recorded`.
 - PostgreSQL path performs these writes in one SQL transaction.
 
+### `GET /api/v1/billing/request-usage`
+
+Purpose: list request usage billing logs for Console billing history, operator review, shadow-mode comparison, and migration reconciliation.
+
+Status: implemented for in-memory and PostgreSQL stores.
+
+Authorization: operator evidence read; when `OPL_LEDGER_ADMIN_TOKEN` is configured, callers must send `Authorization: Bearer <admin-token>`.
+
+Filters:
+
+- `accountId`
+- `userId`
+- `workspaceId`
+- `requestId`
+- `sourceEventId`
+- `requestFingerprint`
+- `ledgerEntryId`
+- `provider`
+- `model`
+
 ### `PUT /api/v1/billing/request-quotas`
 
 Purpose: create or replace the persisted request quota for an account/user/workspace scope.

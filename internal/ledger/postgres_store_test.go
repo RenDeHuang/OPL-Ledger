@@ -606,6 +606,45 @@ func TestPostgresStoreListWalletTransactionsFiltersByAccountAndType(t *testing.T
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreListRequestUsageFiltersByAccountAndSource(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	log := RequestUsageLog{
+		ID:                   "usage_1",
+		UserID:               "usr_1",
+		AccountID:            "acct_1",
+		WorkspaceID:          "ws_1",
+		RequestID:            "req_1",
+		Provider:             "openai",
+		Model:                "gpt-5",
+		AmountCents:          25,
+		RequestedAmountCents: 25,
+		Currency:             "CNY",
+		SourceEventID:        "gateway_req_1",
+		RequestFingerprint:   "fp_1",
+		LedgerEntryID:        "led_1",
+		CreatedAt:            createdAt,
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT payload FROM request_usage_logs WHERE account_id = $1 AND workspace_id = $2 AND source_event_id = $3 ORDER BY created_at, id`)).
+		WithArgs("acct_1", "ws_1", "gateway_req_1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, log)))
+
+	logs, err := store.ListRequestUsage(context.Background(), RequestUsageFilter{
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		SourceEventID: "gateway_req_1",
+	})
+	if err != nil {
+		t.Fatalf("list request usage: %v", err)
+	}
+	if len(logs) != 1 || logs[0].ID != "usage_1" || logs[0].SourceEventID != "gateway_req_1" {
+		t.Fatalf("logs = %+v", logs)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreListWalletsFiltersByAccountID(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

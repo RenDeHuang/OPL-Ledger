@@ -67,6 +67,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/billing/settlements", s.settleWorkspaceUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/resource-usage", s.recordResourceUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/request-usage", s.recordRequestUsage)
+	s.mux.HandleFunc("GET /api/v1/billing/request-usage", s.listRequestUsage)
 	s.mux.HandleFunc("PUT /api/v1/billing/request-quotas", s.upsertRequestQuota)
 	s.mux.HandleFunc("GET /api/v1/billing/request-quotas", s.listRequestQuotas)
 	s.mux.HandleFunc("POST /api/v1/billing/reconciliation", s.recordReconciliation)
@@ -164,6 +165,18 @@ func (s *Server) listManualTopUps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, topups)
+}
+
+func (s *Server) listRequestUsage(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	logs, err := s.store.ListRequestUsage(r.Context(), requestUsageFilterFromQuery(r))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, logs)
 }
 
 func (s *Server) manualTopUp(w http.ResponseWriter, r *http.Request) {
@@ -640,6 +653,21 @@ func manualTopUpFilterFromQuery(r *http.Request) ledger.ManualTopUpFilter {
 		OperatorAccountID: q.Get("operatorAccountId"),
 		SourceEventID:     q.Get("sourceEventId"),
 		Status:            q.Get("status"),
+	}
+}
+
+func requestUsageFilterFromQuery(r *http.Request) ledger.RequestUsageFilter {
+	q := r.URL.Query()
+	return ledger.RequestUsageFilter{
+		AccountID:          q.Get("accountId"),
+		UserID:             q.Get("userId"),
+		WorkspaceID:        q.Get("workspaceId"),
+		RequestID:          q.Get("requestId"),
+		SourceEventID:      q.Get("sourceEventId"),
+		RequestFingerprint: q.Get("requestFingerprint"),
+		LedgerEntryID:       q.Get("ledgerEntryId"),
+		Provider:           q.Get("provider"),
+		Model:              q.Get("model"),
 	}
 }
 
