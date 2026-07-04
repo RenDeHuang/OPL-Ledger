@@ -255,9 +255,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `internal/reconciliation/tencent_test.go`
 - Modify: `internal/reconciliation/tencent.go`
 
-- [ ] Test raw Tencent rows with `workspace_id` tag.
-- [ ] Test missing workspace id fails closed.
-- [ ] Test mixed currency fails closed.
+- [x] Test raw Tencent rows with `workspace_id` tag.
+- [x] Test missing workspace id fails closed.
+- [x] Test mixed currency fails closed.
 
 ### Task 24: Implement Reconciliation Guard API
 

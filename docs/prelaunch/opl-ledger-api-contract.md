@@ -83,6 +83,8 @@ Purpose: summarize ledger entry amount totals.
 
 Purpose: store a Tencent reconciliation report generated from supplied rows.
 
+Normalization: local reconciliation helpers can normalize raw Tencent bill rows using direct `workspaceId` fields or `workspace_id`/`workspaceId` tags, classify compute/storage resources, and fail closed when workspace id is missing or rows mix currencies.
+
 ### `GET /api/v1/billing/reconciliation/latest`
 
 Purpose: return latest stored reconciliation report.

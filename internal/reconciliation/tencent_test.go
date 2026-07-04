@@ -120,3 +120,56 @@ func TestTencentReconciliationFailsTwoCentUndercharge(t *testing.T) {
 		t.Fatalf("expected -2 difference, got %d", report.DifferenceCents)
 	}
 }
+
+func TestNormalizeTencentBillRowsReadsWorkspaceIDFromTags(t *testing.T) {
+	rows, err := NormalizeTencentBillRows([]RawTencentBillRow{
+		{
+			"ProductName":      "Tencent Kubernetes Engine",
+			"RealTotalCost":    12.34,
+			"Currency":         "CNY",
+			"ResourceId":       "ins_1",
+			"Tags":             "workspace_id=ws_1;owner=opl",
+			"BillingMonth":     "2026-07",
+			"AvailabilityZone": "ap-shanghai-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalize rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 normalized row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.WorkspaceID != "ws_1" || row.ResourceType != "compute" || row.AmountCents != 1234 || row.Currency != "CNY" || row.SourceResourceID != "ins_1" {
+		t.Fatalf("row = %+v", row)
+	}
+}
+
+func TestNormalizeTencentBillRowsFailsClosedWhenWorkspaceIDMissing(t *testing.T) {
+	_, err := NormalizeTencentBillRows([]RawTencentBillRow{
+		{
+			"ProductName":   "Cloud Block Storage",
+			"RealTotalCost": 8.00,
+			"Currency":      "CNY",
+			"ResourceId":    "disk_1",
+			"Tags":          "owner=opl",
+		},
+	})
+	if err == nil || err.Error() != "tencent_bill_workspace_id_missing:disk_1" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTencentReconciliationFailsClosedForMixedCurrency(t *testing.T) {
+	report := ReconcileTencentBills(Input{
+		MarkupRate:  0.20,
+		LedgerRows:  []LedgerRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: -1200, Currency: "CNY"}},
+		TencentRows: []TencentRow{{WorkspaceID: "ws_1", ResourceType: "compute", AmountCents: 1000, Currency: "USD"}},
+	})
+	if report.Status != "fail" {
+		t.Fatalf("expected fail, got %s", report.Status)
+	}
+	if report.FailureReason != "mixed_currency_not_supported" {
+		t.Fatalf("failure reason = %q", report.FailureReason)
+	}
+}

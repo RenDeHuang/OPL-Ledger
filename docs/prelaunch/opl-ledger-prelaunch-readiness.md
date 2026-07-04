@@ -133,7 +133,7 @@ Implemented:
 - task receipt record/query with PostgreSQL `accountId/workspaceId/taskId/sourceEventId` idempotency;
 - Console-provided workspace ownership validation hook for task receipt writes;
 - reconciliation submit/latest;
-- Tencent reconciliation primitive;
+- Tencent reconciliation primitive with raw bill row normalization, workspace tag extraction, missing workspace fail-closed, and mixed-currency fail-closed behavior;
 - read-only Deployment evidence collector primitive;
 - React + TypeScript operator UI baseline.
 
