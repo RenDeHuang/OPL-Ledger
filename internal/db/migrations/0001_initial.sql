@@ -53,6 +53,24 @@ CREATE TABLE IF NOT EXISTS task_receipts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS wallets (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  balance_cents BIGINT NOT NULL DEFAULT 0,
+  frozen_cents BIGINT NOT NULL DEFAULT 0,
+  total_recharged_cents BIGINT NOT NULL DEFAULT 0,
+  holds JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS wallets_account_id_idx
+  ON wallets(account_id);
+
+CREATE INDEX IF NOT EXISTS wallets_user_id_idx
+  ON wallets(user_id);
+
 CREATE TABLE IF NOT EXISTS request_usage_logs (
   id TEXT PRIMARY KEY,
   account_id TEXT,
