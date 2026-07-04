@@ -33,6 +33,7 @@ type MemoryStore struct {
 	topUpsBySourceEvent   map[string]ManualTopUp
 	transactionsBySource  map[string]wallet.Transaction
 	releaseHoldsBySource  map[string]ReleaseHoldResult
+	settlementsBySource   map[string]SettlementResult
 	requestUsageBySource  map[string]RequestUsageResult
 	requestUsageByRequest map[string]RequestUsageResult
 	auditBySourceEvent    map[string]AuditEvent
@@ -47,6 +48,7 @@ func NewMemoryStore() *MemoryStore {
 		topUpsBySourceEvent:   map[string]ManualTopUp{},
 		transactionsBySource:  map[string]wallet.Transaction{},
 		releaseHoldsBySource:  map[string]ReleaseHoldResult{},
+		settlementsBySource:   map[string]SettlementResult{},
 		requestUsageBySource:  map[string]RequestUsageResult{},
 		requestUsageByRequest: map[string]RequestUsageResult{},
 		auditBySourceEvent:    map[string]AuditEvent{},
@@ -459,6 +461,108 @@ func (s *MemoryStore) ReleaseHolds(_ context.Context, input ReleaseHoldInput) (R
 		Created:      true,
 	}
 	s.releaseHoldsBySource[input.SourceEventID] = result
+	return result, nil
+}
+
+func (s *MemoryStore) SettleWorkspaceUsage(_ context.Context, input SettlementInput) (SettlementResult, error) {
+	if err := validateSettlementInput(input); err != nil {
+		return SettlementResult{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if existing, ok := s.settlementsBySource[input.SourceEventID]; ok {
+		w := s.wallets[input.AccountID]
+		existing.Wallet = w.Snapshot()
+		existing.Created = false
+		return existing, nil
+	}
+
+	w := s.wallets[input.AccountID]
+	if w.AccountID == "" {
+		w.AccountID = input.AccountID
+		w.UserID = input.UserID
+		if w.UserID == "" {
+			w.UserID = "usr-" + input.AccountID
+		}
+	}
+	createdAt := time.Now().UTC()
+	var entries []Entry
+	var transactions []wallet.Transaction
+	var intents []SettlementIntent
+	var unpaid int64
+	if input.ComputeActive {
+		result := settleCharge(&w, settlementChargeInput{
+			holdType:       "compute",
+			resourceKind:   "compute",
+			eventType:      "compute_debit",
+			accountID:      input.AccountID,
+			userID:         w.UserID,
+			workspaceID:    input.WorkspaceID,
+			resourceID:     input.ComputeID,
+			sourceEventID:  input.SourceEventID,
+			requestedCents: input.ComputeHourlyCents * input.Hours,
+			billableHours:  input.Hours,
+		}, createdAt)
+		entries = append(entries, result.entries...)
+		transactions = append(transactions, result.transactions...)
+		unpaid += result.unpaidCents
+		if result.exhaustedHold {
+			intents = append(intents, SettlementIntent{
+				Type:          IntentComputeAutoStopped,
+				AccountID:     input.AccountID,
+				WorkspaceID:   input.WorkspaceID,
+				ComputeID:     input.ComputeID,
+				SourceEventID: input.SourceEventID,
+				Reason:        "compute_hold_exhausted",
+			})
+		}
+	}
+	if input.StorageActive {
+		result := settleCharge(&w, settlementChargeInput{
+			holdType:       "storage",
+			resourceKind:   "storage",
+			eventType:      "storage_debit",
+			accountID:      input.AccountID,
+			userID:         w.UserID,
+			workspaceID:    input.WorkspaceID,
+			resourceID:     input.StorageID,
+			sourceEventID:  input.SourceEventID,
+			requestedCents: input.StorageHourlyCents * input.Hours,
+			billableHours:  input.Hours,
+		}, createdAt)
+		entries = append(entries, result.entries...)
+		transactions = append(transactions, result.transactions...)
+		unpaid += result.unpaidCents
+		if result.unpaidCents > 0 || result.exhaustedHold {
+			intents = append(intents, SettlementIntent{
+				Type:          IntentStorageHoldExhausted,
+				AccountID:     input.AccountID,
+				WorkspaceID:   input.WorkspaceID,
+				StorageID:     input.StorageID,
+				SourceEventID: input.SourceEventID,
+				Reason:        "storage_hold_exhausted",
+			})
+		}
+	}
+	for _, entry := range entries {
+		s.entries = append(s.entries, entry)
+		s.bySourceEvent[entry.SourceEventID] = entry
+	}
+	for _, transaction := range transactions {
+		s.walletTransactions = append(s.walletTransactions, transaction)
+		s.transactionsBySource[transaction.SourceEventID] = transaction
+	}
+	s.wallets[input.AccountID] = w
+	result := SettlementResult{
+		Wallet:       w.Snapshot(),
+		Entries:      entries,
+		Transactions: transactions,
+		Intents:      intents,
+		UnpaidCents:  unpaid,
+		Created:      true,
+	}
+	s.settlementsBySource[input.SourceEventID] = result
 	return result, nil
 }
 

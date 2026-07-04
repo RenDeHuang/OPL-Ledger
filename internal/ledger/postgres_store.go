@@ -20,6 +20,7 @@ type Store interface {
 	ManualTopUp(context.Context, ManualTopUpInput) (ManualTopUpResult, error)
 	CreateHold(context.Context, HoldInput) (HoldResult, error)
 	ReleaseHolds(context.Context, ReleaseHoldInput) (ReleaseHoldResult, error)
+	SettleWorkspaceUsage(context.Context, SettlementInput) (SettlementResult, error)
 	RecordRequestUsage(context.Context, RequestUsageInput) (RequestUsageResult, error)
 	AppendAuditEvent(context.Context, AuditEventInput) (AuditEvent, error)
 	ListAuditEvents(context.Context, AuditEventFilter) ([]AuditEvent, error)
@@ -694,6 +695,158 @@ func (s *PostgresStore) ReleaseHolds(ctx context.Context, input ReleaseHoldInput
 		Wallet:       after,
 		Entries:      entries,
 		Transactions: transactions,
+		Created:      true,
+	}, nil
+}
+
+func (s *PostgresStore) SettleWorkspaceUsage(ctx context.Context, input SettlementInput) (SettlementResult, error) {
+	if err := validateSettlementInput(input); err != nil {
+		return SettlementResult{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SettlementResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	existing, err := loadSettlementEntriesBySource(ctx, tx, input.SourceEventID)
+	if err != nil {
+		return SettlementResult{}, err
+	}
+	if len(existing) > 0 {
+		w, _, err := s.walletForUpdate(ctx, tx, input.AccountID)
+		if err != nil {
+			return SettlementResult{}, err
+		}
+		transactions := make([]wallet.Transaction, 0, len(existing))
+		for _, entry := range existing {
+			transaction, err := loadWalletTransactionBySource(ctx, tx, entry.SourceEventID)
+			if err != nil {
+				return SettlementResult{}, err
+			}
+			transactions = append(transactions, transaction)
+		}
+		if err := tx.Commit(); err != nil {
+			return SettlementResult{}, err
+		}
+		committed = true
+		return SettlementResult{
+			Wallet:       w.Snapshot(),
+			Entries:      existing,
+			Transactions: transactions,
+			Created:      false,
+		}, nil
+	}
+
+	w, found, err := s.walletForUpdate(ctx, tx, input.AccountID)
+	if err != nil {
+		return SettlementResult{}, err
+	}
+	if !found {
+		w = wallet.Wallet{
+			UserID:    input.UserID,
+			AccountID: input.AccountID,
+			Holds:     map[string]int64{},
+		}
+		if w.UserID == "" {
+			w.UserID = "usr-" + input.AccountID
+		}
+	}
+	createdAt := nowUTC()
+	var entries []Entry
+	var transactions []wallet.Transaction
+	var intents []SettlementIntent
+	var unpaid int64
+	if input.ComputeActive {
+		result := settleCharge(&w, settlementChargeInput{
+			holdType:       "compute",
+			resourceKind:   "compute",
+			eventType:      "compute_debit",
+			accountID:      input.AccountID,
+			userID:         w.UserID,
+			workspaceID:    input.WorkspaceID,
+			resourceID:     input.ComputeID,
+			sourceEventID:  input.SourceEventID,
+			requestedCents: input.ComputeHourlyCents * input.Hours,
+			billableHours:  input.Hours,
+		}, createdAt)
+		entries = append(entries, result.entries...)
+		transactions = append(transactions, result.transactions...)
+		unpaid += result.unpaidCents
+		if result.exhaustedHold {
+			intents = append(intents, SettlementIntent{
+				Type:          IntentComputeAutoStopped,
+				AccountID:     input.AccountID,
+				WorkspaceID:   input.WorkspaceID,
+				ComputeID:     input.ComputeID,
+				SourceEventID: input.SourceEventID,
+				Reason:        "compute_hold_exhausted",
+			})
+		}
+	}
+	if input.StorageActive {
+		result := settleCharge(&w, settlementChargeInput{
+			holdType:       "storage",
+			resourceKind:   "storage",
+			eventType:      "storage_debit",
+			accountID:      input.AccountID,
+			userID:         w.UserID,
+			workspaceID:    input.WorkspaceID,
+			resourceID:     input.StorageID,
+			sourceEventID:  input.SourceEventID,
+			requestedCents: input.StorageHourlyCents * input.Hours,
+			billableHours:  input.Hours,
+		}, createdAt)
+		entries = append(entries, result.entries...)
+		transactions = append(transactions, result.transactions...)
+		unpaid += result.unpaidCents
+		if result.unpaidCents > 0 || result.exhaustedHold {
+			intents = append(intents, SettlementIntent{
+				Type:          IntentStorageHoldExhausted,
+				AccountID:     input.AccountID,
+				WorkspaceID:   input.WorkspaceID,
+				StorageID:     input.StorageID,
+				SourceEventID: input.SourceEventID,
+				Reason:        "storage_hold_exhausted",
+			})
+		}
+	}
+	for i, entry := range entries {
+		payload, err := json.Marshal(map[string]any{
+			"sourceEventId":  input.SourceEventID,
+			"fundingSource":  transactions[i].FundingSource,
+			"billableHours":  input.Hours,
+			"requestedCents": settlementRequestedCents(input, entry),
+		})
+		if err != nil {
+			return SettlementResult{}, err
+		}
+		if err := insertLedgerEntry(ctx, tx, entry, payload); err != nil {
+			return SettlementResult{}, err
+		}
+		if err := insertWalletTransaction(ctx, tx, transactions[i]); err != nil {
+			return SettlementResult{}, err
+		}
+	}
+	after := w.Snapshot()
+	if err := s.upsertWallet(ctx, tx, w, after, createdAt); err != nil {
+		return SettlementResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return SettlementResult{}, err
+	}
+	committed = true
+	return SettlementResult{
+		Wallet:       after,
+		Entries:      entries,
+		Transactions: transactions,
+		Intents:      intents,
+		UnpaidCents:  unpaid,
 		Created:      true,
 	}, nil
 }
@@ -1430,6 +1583,25 @@ func entriesForSourceEvent(ctx context.Context, tx *sql.Tx, sourceEventID string
 	}
 	defer rows.Close()
 	return scanEntries(rows)
+}
+
+func loadSettlementEntriesBySource(ctx context.Context, tx *sql.Tx, sourceEventID string) ([]Entry, error) {
+	rows, err := tx.QueryContext(ctx, selectLedgerEntryColumns+` FROM ledger_entries WHERE source_event_id = $1 OR source_event_id LIKE $2 ORDER BY created_at, id`, sourceEventID, sourceEventID+":%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEntries(rows)
+}
+
+func settlementRequestedCents(input SettlementInput, entry Entry) int64 {
+	if entry.ComputeID != "" {
+		return input.ComputeHourlyCents * input.Hours
+	}
+	if entry.StorageID != "" {
+		return input.StorageHourlyCents * input.Hours
+	}
+	return 0
 }
 
 func sameHoldReleaseReplay(entry Entry, input ReleaseHoldInput, holdType string, sourceEventID string) bool {

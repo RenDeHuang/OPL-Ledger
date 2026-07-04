@@ -578,6 +578,68 @@ func TestHoldReleaseAPIReleasesExistingComputeHold(t *testing.T) {
 	}
 }
 
+func TestSettlementAPIChargesAvailableBeforeComputeHoldAndReplays(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":1000,
+		"reason":"owner_credit_1"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+	hold := postHold(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"holdType":"compute",
+		"amountCents":700,
+		"sourceEventId":"compute_resource:compute_1:created",
+		"resourceId":"compute_1"
+	}`))
+	if hold.code != http.StatusCreated {
+		t.Fatalf("hold status = %d body=%s", hold.code, hold.body)
+	}
+
+	body := []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"computeId":"compute_1",
+		"sourceEventId":"billing_tick_1",
+		"hours":1,
+		"computeActive":true,
+		"computeHourlyCents":500
+	}`)
+	first := postSettlement(t, server, body)
+	if first.code != http.StatusCreated {
+		t.Fatalf("first settlement status = %d body=%s", first.code, first.body)
+	}
+	second := postSettlement(t, server, body)
+	if second.code != http.StatusOK {
+		t.Fatalf("second settlement status = %d body=%s", second.code, second.body)
+	}
+	if len(first.result.Entries) != 2 {
+		t.Fatalf("entries = %+v", first.result.Entries)
+	}
+	if first.result.Entries[0].EventType != "compute_debit" || first.result.Entries[0].AmountCents != -300 {
+		t.Fatalf("available entry = %+v", first.result.Entries[0])
+	}
+	if first.result.Entries[1].EventType != "compute_debit" || first.result.Entries[1].AmountCents != -200 {
+		t.Fatalf("hold entry = %+v", first.result.Entries[1])
+	}
+	if len(first.result.Transactions) != 2 || first.result.Transactions[0].FundingSource != "available_balance" || first.result.Transactions[1].FundingSource != "compute_hold" {
+		t.Fatalf("transactions = %+v", first.result.Transactions)
+	}
+	if second.result.Wallet.BalanceCents != 500 || second.result.Wallet.FrozenCents != 500 || second.result.Wallet.AvailableCents != 0 || second.result.Wallet.Holds["compute"] != 500 {
+		t.Fatalf("wallet was double settled or wrong: %+v", second.result.Wallet)
+	}
+	if first.result.Entries[0].ID != second.result.Entries[0].ID || first.result.Transactions[0].ID != second.result.Transactions[0].ID {
+		t.Fatalf("expected replayed settlement records")
+	}
+}
+
 func TestAuditEventAPIPostsAndQueriesEvents(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	body := []byte(`{
@@ -804,6 +866,18 @@ type holdReleaseAPIResponse struct {
 	}
 }
 
+type settlementAPIResponse struct {
+	code   int
+	body   string
+	result struct {
+		Wallet       wallet.Snapshot      `json:"wallet"`
+		Entries      []ledger.Entry       `json:"entries"`
+		Transactions []wallet.Transaction `json:"transactions"`
+		UnpaidCents  int64                `json:"unpaidCents"`
+		Created      bool                 `json:"created"`
+	}
+}
+
 func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppendResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -812,6 +886,19 @@ func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppen
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.entry); err != nil {
 			t.Fatalf("decode append response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func postSettlement(t *testing.T, server http.Handler, body []byte) settlementAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/settlements", bytes.NewReader(body)))
+	response := settlementAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.result); err != nil {
+			t.Fatalf("decode settlement response: %v body=%s", err, rec.Body.String())
 		}
 	}
 	return response

@@ -404,6 +404,57 @@ func TestPostgresStoreReleaseHoldsWritesAccountingLoopInOneTransaction(t *testin
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreSettleWorkspaceUsageWritesDebitsInOneTransaction(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id, source_event_id, request_fingerprint, amount_cents, currency, created_at FROM ledger_entries WHERE source_event_id = \$1 OR source_event_id LIKE \$2 ORDER BY created_at, id`).
+		WithArgs("billing_tick_1", "billing_tick_1:%").
+		WillReturnRows(ledgerEntryRows())
+	mock.ExpectQuery(`SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds`).
+		WithArgs("acct_1").
+		WillReturnRows(walletRows().AddRow("wal_1", "usr_1", "acct_1", int64(1000), int64(700), int64(1000), []byte(`{"compute":700}`), createdAt, createdAt))
+	mock.ExpectExec(`INSERT INTO ledger_entries`).
+		WithArgs(sqlmock.AnyArg(), "compute_debit", "acct_1", "usr_1", "ws_1", "compute_1", "", "", "billing_tick_1:compute:available_balance", "", int64(-300), "CNY", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallet_transactions`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "debit", int64(-300), "CNY", "billing_tick_1:compute:available_balance", sqlmock.AnyArg(), "", "available_balance", int64(1000), int64(500), int64(700), int64(500), int64(0), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO ledger_entries`).
+		WithArgs(sqlmock.AnyArg(), "compute_debit", "acct_1", "usr_1", "ws_1", "compute_1", "", "", "billing_tick_1:compute:compute_hold", "", int64(-200), "CNY", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallet_transactions`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "debit", int64(-200), "CNY", "billing_tick_1:compute:compute_hold", sqlmock.AnyArg(), "", "compute_hold", int64(1000), int64(500), int64(700), int64(500), int64(0), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(sqlmock.AnyArg(), "usr_1", "acct_1", int64(500), int64(500), int64(1000), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := store.SettleWorkspaceUsage(context.Background(), SettlementInput{
+		AccountID:          "acct_1",
+		UserID:             "usr_1",
+		WorkspaceID:        "ws_1",
+		ComputeID:          "compute_1",
+		SourceEventID:      "billing_tick_1",
+		Hours:              1,
+		ComputeActive:      true,
+		ComputeHourlyCents: 500,
+	})
+	if err != nil {
+		t.Fatalf("settle workspace usage: %v", err)
+	}
+	if !result.Created {
+		t.Fatalf("expected created result")
+	}
+	if result.Wallet.BalanceCents != 500 || result.Wallet.FrozenCents != 500 || len(result.Entries) != 2 || len(result.Transactions) != 2 {
+		t.Fatalf("unexpected settlement result: %+v", result)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreAppendEvidenceRecordCreatesPersistentEvidenceRow(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

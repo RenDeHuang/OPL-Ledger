@@ -163,6 +163,65 @@ Persistence requirements:
 - Released hold amount writes `hold_release` wallet transactions with before/after frozen and available balances.
 - PostgreSQL path performs these writes in one SQL transaction.
 
+### `POST /api/v1/billing/settlements`
+
+Purpose: settle hourly compute/storage usage against wallet balance and prepaid holds.
+
+Status: implemented for available-balance-first debit, hold capture, no-negative-balance behavior, hold-exhaustion intents, idempotent replay, wallet snapshot update, ledger entries, wallet transactions, and PostgreSQL transaction wiring.
+
+Idempotency: `sourceEventId` identifies the billing tick. Because one tick can produce multiple ledger entries, persisted settlement entries use derived source ids:
+
+- `<sourceEventId>:compute:available_balance`
+- `<sourceEventId>:compute:compute_hold`
+- `<sourceEventId>:storage:available_balance`
+- `<sourceEventId>:storage:storage_hold`
+
+Request:
+
+```json
+{
+  "accountId": "acct_1",
+  "userId": "usr_1",
+  "workspaceId": "ws_1",
+  "computeId": "compute_1",
+  "storageId": "storage_1",
+  "sourceEventId": "billing_tick_1",
+  "hours": 1,
+  "computeActive": true,
+  "storageActive": true,
+  "computeHourlyCents": 500,
+  "storageHourlyCents": 1
+}
+```
+
+Response:
+
+```json
+{
+  "created": true,
+  "wallet": {
+    "accountId": "acct_1",
+    "balanceCents": 500,
+    "frozenCents": 500,
+    "availableCents": 0,
+    "holds": {"compute": 500}
+  },
+  "entries": [{}],
+  "transactions": [{}],
+  "unpaidCents": 0
+}
+```
+
+Persistence requirements:
+
+- Wallet charge order is available balance first, then matching compute/storage hold.
+- Wallet balance never goes below zero; uncovered requested amount is returned as `unpaidCents`.
+- Positive charged amount writes `compute_debit` or `storage_debit` ledger entries with negative amount.
+- Positive charged amount writes `debit` wallet transactions with `fundingSource` set to `available_balance`, `compute_hold`, or `storage_hold`.
+- Exhausted compute hold returns a `compute_auto_stopped` intent.
+- Exhausted or unpaid storage returns a `storage_hold_exhausted` intent.
+- PostgreSQL path performs these writes in one SQL transaction.
+
 ### `POST /api/v1/ledger/entries`
 
 Purpose: append low-level ledger entry.
@@ -431,7 +490,6 @@ Response:
 
 - Wallet read API.
 - Wallet transaction list API.
-- Hourly settlement API. Core compute/storage debit calculation, available-balance-first charging, hold capture, hold-exhaustion intents, and no-negative-balance rules are implemented locally; API/PostgreSQL transaction wiring is still planned.
 - Resource usage log API/store wiring. Compute and storage resource usage log shapes are implemented locally with workspace/resource ids.
 - Reconciliation guard API.
 - Kubernetes evidence snapshot API. Read-only collector and PostgreSQL persistence primitives are implemented locally; external API wiring is still planned.

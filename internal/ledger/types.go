@@ -200,6 +200,46 @@ type ReleaseHoldResult struct {
 	Created      bool                 `json:"created"`
 }
 
+type SettlementInput struct {
+	AccountID          string `json:"accountId"`
+	UserID             string `json:"userId,omitempty"`
+	WorkspaceID        string `json:"workspaceId"`
+	ComputeID          string `json:"computeId,omitempty"`
+	StorageID          string `json:"storageId,omitempty"`
+	SourceEventID      string `json:"sourceEventId"`
+	Hours              int64  `json:"hours"`
+	ComputeActive      bool   `json:"computeActive,omitempty"`
+	StorageActive      bool   `json:"storageActive,omitempty"`
+	ComputeHourlyCents int64  `json:"computeHourlyCents,omitempty"`
+	StorageHourlyCents int64  `json:"storageHourlyCents,omitempty"`
+}
+
+type SettlementResult struct {
+	Wallet       wallet.Snapshot      `json:"wallet"`
+	Entries      []Entry              `json:"entries"`
+	Transactions []wallet.Transaction `json:"transactions"`
+	Intents      []SettlementIntent   `json:"intents,omitempty"`
+	UnpaidCents  int64                `json:"unpaidCents"`
+	Created      bool                 `json:"created"`
+}
+
+type SettlementIntentType string
+
+const (
+	IntentComputeAutoStopped   SettlementIntentType = "compute_auto_stopped"
+	IntentStorageHoldExhausted SettlementIntentType = "storage_hold_exhausted"
+)
+
+type SettlementIntent struct {
+	Type          SettlementIntentType `json:"type"`
+	AccountID     string               `json:"accountId,omitempty"`
+	WorkspaceID   string               `json:"workspaceId,omitempty"`
+	ComputeID     string               `json:"computeId,omitempty"`
+	StorageID     string               `json:"storageId,omitempty"`
+	SourceEventID string               `json:"sourceEventId,omitempty"`
+	Reason        string               `json:"reason,omitempty"`
+}
+
 type AuditEvent = auditlog.Event
 type AuditEventInput = auditlog.EventInput
 type AuditEventFilter = auditlog.EventFilter
