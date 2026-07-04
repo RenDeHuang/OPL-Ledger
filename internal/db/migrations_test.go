@@ -66,11 +66,12 @@ func TestInitialMigrationDefinesWalletTransactionAndTopUpAuditFields(t *testing.
 		t.Fatalf("read initial migration: %v", err)
 	}
 	sql := string(sqlBytes)
-	required := []string{
+	walletTransactions := tableBlock(t, sql, "wallet_transactions")
+	requiredWalletFields := []string{
 		"account_id TEXT",
 		"workspace_id TEXT",
 		"source_event_id TEXT",
-		"ledger_entry_id TEXT REFERENCES ledger_entries(id)",
+		"ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id)",
 		"usage_log_id TEXT",
 		"funding_source TEXT",
 		"balance_before_cents BIGINT NOT NULL DEFAULT 0",
@@ -78,15 +79,32 @@ func TestInitialMigrationDefinesWalletTransactionAndTopUpAuditFields(t *testing.
 		"frozen_before_cents BIGINT NOT NULL DEFAULT 0",
 		"frozen_after_cents BIGINT NOT NULL DEFAULT 0",
 		"available_after_cents BIGINT NOT NULL DEFAULT 0",
+	}
+	for _, needle := range requiredWalletFields {
+		if !strings.Contains(walletTransactions, needle) {
+			t.Fatalf("wallet_transactions migration missing %q", needle)
+		}
+	}
+	manualTopups := tableBlock(t, sql, "manual_topups")
+	requiredTopupFields := []string{
 		"operator_account_id TEXT",
 		"target_user_id TEXT",
 		"target_account_id TEXT NOT NULL",
-		"wallet_transaction_id TEXT REFERENCES wallet_transactions(id)",
+		"ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id)",
+		"wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id)",
+		"audit_event_id TEXT NOT NULL REFERENCES audit_events(id)",
 		"status TEXT NOT NULL",
+	}
+	for _, needle := range requiredTopupFields {
+		if !strings.Contains(manualTopups, needle) {
+			t.Fatalf("manual_topups migration missing %q", needle)
+		}
+	}
+	requiredIndexes := []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS manual_topups_source_event_idx",
 		"CREATE INDEX IF NOT EXISTS wallet_transactions_account_id_idx",
 	}
-	for _, needle := range required {
+	for _, needle := range requiredIndexes {
 		if !strings.Contains(sql, needle) {
 			t.Fatalf("migration missing %q", needle)
 		}
@@ -163,4 +181,19 @@ func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 		_ = db.Close()
 	})
 	return db, mock
+}
+
+func tableBlock(t *testing.T, sql string, table string) string {
+	t.Helper()
+	startNeedle := "CREATE TABLE IF NOT EXISTS " + table + " ("
+	start := strings.Index(sql, startNeedle)
+	if start == -1 {
+		t.Fatalf("migration missing table %q", table)
+	}
+	remaining := sql[start+len(startNeedle):]
+	end := strings.Index(remaining, "\n);")
+	if end == -1 {
+		t.Fatalf("migration table %q missing closing delimiter", table)
+	}
+	return remaining[:end]
 }

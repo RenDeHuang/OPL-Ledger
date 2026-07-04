@@ -41,7 +41,9 @@ fabric:storage:vol_1:destroyed
 
 ## Resource Preflight and Hold
 
-### Existing route: `POST /api/v1/billing/holds`
+### Canonical route: `POST /api/v1/billing/holds`
+
+### Fabric route: `POST /api/v1/fabric/resource-preflight`
 
 Purpose: reserve spend before Fabric opens or resumes a paid resource.
 
@@ -93,7 +95,9 @@ Fabric behavior:
 
 ## Resource Create Failed
 
-### Existing route: `POST /api/v1/billing/holds/release`
+### Canonical route: `POST /api/v1/billing/holds/release`
+
+### Fabric route: `POST /api/v1/fabric/resource-create-failed`
 
 Purpose: release reserved funds when provider creation fails.
 
@@ -131,7 +135,9 @@ Fabric behavior:
 
 ## Resource Created Evidence
 
-### Existing route: `POST /api/v1/ledger/evidence-records`
+### Canonical route: `POST /api/v1/ledger/evidence-records`
+
+### Fabric route: `POST /api/v1/fabric/resource-created`
 
 Purpose: record provider evidence for successful resource creation.
 
@@ -166,7 +172,9 @@ Fabric behavior:
 
 ## Resource Usage Log
 
-### Existing route: `POST /api/v1/billing/resource-usage`
+### Canonical route: `POST /api/v1/billing/resource-usage`
+
+### Fabric route: `POST /api/v1/fabric/resource-usage-tick`
 
 Purpose: record compute/storage usage facts. This is usage evidence, not wallet
 movement by itself.
@@ -206,7 +214,9 @@ Fabric behavior:
 
 ## Hourly Settlement
 
-### Existing route: `POST /api/v1/billing/settlements`
+### Canonical route: `POST /api/v1/billing/settlements`
+
+### Fabric route: `POST /api/v1/fabric/resource-settlement`
 
 Purpose: charge compute/storage usage against available balance and prepaid
 holds.
@@ -262,7 +272,12 @@ Fabric behavior:
 
 ## Resource Stopped or Destroyed
 
-### Existing route: `POST /api/v1/billing/holds/release`
+### Canonical route: `POST /api/v1/billing/holds/release`
+
+### Fabric routes:
+
+- `POST /api/v1/fabric/resource-stopped`
+- `POST /api/v1/fabric/resource-destroyed`
 
 Purpose: release remaining hold when a resource stops or is destroyed.
 

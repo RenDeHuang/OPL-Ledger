@@ -19,6 +19,22 @@ Pre-launch contract for `OPL-Cloud` / `medopl-3` consumers. Production traffic r
 
 ## Implemented
 
+## Fabric-Facing Route Aliases
+
+Fabric may call semantic lifecycle routes instead of canonical billing routes.
+These aliases use the same request and response bodies as the canonical routes
+and execute the same Ledger store behavior.
+
+| Fabric route | Canonical route | Purpose |
+| --- | --- | --- |
+| `POST /api/v1/fabric/resource-preflight` | `POST /api/v1/billing/holds` | reserve compute/storage spend before opening or resuming a resource |
+| `POST /api/v1/fabric/resource-create-failed` | `POST /api/v1/billing/holds/release` | release hold after provider creation failure |
+| `POST /api/v1/fabric/resource-created` | `POST /api/v1/ledger/evidence-records` | record provider evidence for successful creation |
+| `POST /api/v1/fabric/resource-usage-tick` | `POST /api/v1/billing/resource-usage` | record compute/storage usage evidence |
+| `POST /api/v1/fabric/resource-settlement` | `POST /api/v1/billing/settlements` | charge hourly compute/storage usage |
+| `POST /api/v1/fabric/resource-stopped` | `POST /api/v1/billing/holds/release` | release remaining hold after stop |
+| `POST /api/v1/fabric/resource-destroyed` | `POST /api/v1/billing/holds/release` | release remaining hold after destroy |
+
 ### `POST /api/v1/billing/topups`
 
 Purpose: manual wallet credit from Console/admin operation.

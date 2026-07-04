@@ -100,13 +100,15 @@ Expected: PASS.
   - `POST /api/v1/billing/resource-usage`
   - `POST /api/v1/ledger/evidence-records`
   - `POST /api/v1/ledger/kubernetes-evidence-snapshots`
-- [ ] Add route alias handlers only if Fabric needs semantic routes that cannot
-  cleanly call existing billing routes. Candidate aliases:
+- [ ] Maintain route alias handlers for Fabric semantic calls:
   - `POST /api/v1/fabric/resource-preflight`
   - `POST /api/v1/fabric/resource-create-failed`
+  - `POST /api/v1/fabric/resource-created`
   - `POST /api/v1/fabric/resource-usage-tick`
+  - `POST /api/v1/fabric/resource-settlement`
+  - `POST /api/v1/fabric/resource-stopped`
   - `POST /api/v1/fabric/resource-destroyed`
-- [ ] If aliases are added, write tests that prove each alias maps to the same
+- [ ] Write tests that prove each alias maps to the same
   store behavior as the canonical billing route.
 - [ ] Confirm settlement action intents are explicit enough for Fabric to act
   on `stop_compute` and storage freeze/destroy semantics.

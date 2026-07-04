@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   amount_cents BIGINT NOT NULL,
   currency TEXT NOT NULL DEFAULT 'CNY',
   source_event_id TEXT,
-  ledger_entry_id TEXT REFERENCES ledger_entries(id),
+  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
   usage_log_id TEXT,
   funding_source TEXT,
   balance_before_cents BIGINT NOT NULL DEFAULT 0,
@@ -206,9 +206,9 @@ CREATE TABLE IF NOT EXISTS manual_topups (
   status TEXT NOT NULL,
   balance_before_cents BIGINT NOT NULL DEFAULT 0,
   balance_after_cents BIGINT NOT NULL DEFAULT 0,
-  ledger_entry_id TEXT REFERENCES ledger_entries(id),
-  wallet_transaction_id TEXT REFERENCES wallet_transactions(id),
-  audit_event_id TEXT REFERENCES audit_events(id),
+  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
+  wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id),
+  audit_event_id TEXT NOT NULL REFERENCES audit_events(id),
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

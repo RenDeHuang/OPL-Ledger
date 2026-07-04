@@ -710,6 +710,44 @@ func TestHoldAPIAppendsIdempotentComputeHold(t *testing.T) {
 	}
 }
 
+func TestFabricResourcePreflightAliasCreatesIdempotentHold(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":1000,
+		"reason":"owner_credit_1"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+
+	body := []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"holdType":"compute",
+		"amountCents":600,
+		"sourceEventId":"fabric:compute:compute_1:create_requested",
+		"resourceId":"compute_1",
+		"packageId":"basic"
+	}`)
+	first := postHoldTo(t, server, "/api/v1/fabric/resource-preflight", body)
+	if first.code != http.StatusCreated {
+		t.Fatalf("first fabric preflight status = %d body=%s", first.code, first.body)
+	}
+	second := postHoldTo(t, server, "/api/v1/fabric/resource-preflight", body)
+	if second.code != http.StatusOK {
+		t.Fatalf("second fabric preflight status = %d body=%s", second.code, second.body)
+	}
+	if first.result.Entry.EventType != "compute_hold" || first.result.Transaction.Type != wallet.TransactionHold {
+		t.Fatalf("unexpected fabric preflight result: entry=%+v transaction=%+v", first.result.Entry, first.result.Transaction)
+	}
+	if first.result.Entry.ID != second.result.Entry.ID || first.result.Transaction.ID != second.result.Transaction.ID {
+		t.Fatalf("expected replayed fabric preflight records")
+	}
+}
+
 func TestHoldAPIInsufficientAvailableBalanceDoesNotMutateBillingState(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	topup := postManualTopUp(t, server, []byte(`{
@@ -797,6 +835,101 @@ func TestHoldReleaseAPIReleasesExistingComputeHold(t *testing.T) {
 	}
 	if replayed.result.Wallet.BalanceCents != 1000 || replayed.result.Wallet.FrozenCents != 0 || replayed.result.Wallet.AvailableCents != 1000 || replayed.result.Wallet.Holds["compute"] != 0 {
 		t.Fatalf("unexpected release replay wallet: %+v", replayed.result.Wallet)
+	}
+}
+
+func TestFabricLifecycleAliasesRecordUsageSettlementReleaseAndEvidence(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":1000,
+		"reason":"owner_credit_1"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+	hold := postHold(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"holdType":"compute",
+		"amountCents":700,
+		"sourceEventId":"fabric:compute:compute_1:create_requested",
+		"resourceId":"compute_1"
+	}`))
+	if hold.code != http.StatusCreated {
+		t.Fatalf("hold status = %d body=%s", hold.code, hold.body)
+	}
+
+	evidence := postEvidenceTo(t, server, "/api/v1/fabric/resource-created", []byte(`{
+		"type":"fabric.compute.created",
+		"accountId":"acct_1",
+		"workspaceId":"ws_1",
+		"targetKind":"compute",
+		"targetId":"compute_1",
+		"sourceEventId":"fabric:compute:compute_1:created",
+		"plan":{"packageId":"basic"},
+		"approval":{"status":"ledger_hold_created"},
+		"environment":{"runtimeProvider":"tencent"},
+		"payload":{"provider":"tencent","packageId":"basic"}
+	}`))
+	if evidence.code != http.StatusCreated {
+		t.Fatalf("fabric created evidence status = %d body=%s", evidence.code, evidence.body)
+	}
+	if evidence.record.Type != "fabric.compute.created" || evidence.record.SourceEventID != "fabric:compute:compute_1:created" {
+		t.Fatalf("fabric evidence = %+v", evidence.record)
+	}
+
+	usage := postResourceUsageTo(t, server, "/api/v1/fabric/resource-usage-tick", []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"computeId":"compute_1",
+		"resourceKind":"compute",
+		"quantity":1,
+		"unit":"hour",
+		"unitPriceCents":120,
+		"amountCents":120,
+		"sourceEventId":"fabric:compute:compute_1:usage:2026070412"
+	}`))
+	if usage.code != http.StatusCreated {
+		t.Fatalf("fabric usage status = %d body=%s", usage.code, usage.body)
+	}
+	if usage.result.Log.ComputeID != "compute_1" || usage.result.Log.AmountCents != 120 {
+		t.Fatalf("fabric usage log = %+v", usage.result.Log)
+	}
+
+	settlement := postSettlementTo(t, server, "/api/v1/fabric/resource-settlement", []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"computeId":"compute_1",
+		"sourceEventId":"fabric:compute:compute_1:settlement:2026070412",
+		"hours":1,
+		"computeActive":true,
+		"computeHourlyCents":120
+	}`))
+	if settlement.code != http.StatusCreated {
+		t.Fatalf("fabric settlement status = %d body=%s", settlement.code, settlement.body)
+	}
+	if len(settlement.result.Transactions) != 1 || settlement.result.Transactions[0].Type != wallet.TransactionDebit {
+		t.Fatalf("fabric settlement transactions = %+v", settlement.result.Transactions)
+	}
+
+	release := postHoldReleaseTo(t, server, "/api/v1/fabric/resource-destroyed", []byte(`{
+		"accountId":"acct_1",
+		"workspaceId":"ws_1",
+		"holdTypes":["compute"],
+		"sourceEventId":"fabric:compute:compute_1:destroyed",
+		"computeId":"compute_1",
+		"reason":"resource destroyed"
+	}`))
+	if release.code != http.StatusCreated {
+		t.Fatalf("fabric destroyed release status = %d body=%s", release.code, release.body)
+	}
+	if len(release.result.Transactions) != 1 || release.result.Transactions[0].Type != wallet.TransactionHoldRelease {
+		t.Fatalf("fabric release transactions = %+v", release.result.Transactions)
 	}
 }
 
@@ -1325,6 +1458,12 @@ type resourceUsageLogsAPIResponse struct {
 	logs []usage.ResourceUsageLog
 }
 
+type evidenceAPIResponse struct {
+	code   int
+	body   string
+	record ledger.EvidenceRecord
+}
+
 type walletTransactionsAPIResponse struct {
 	code         int
 	body         string
@@ -1419,9 +1558,13 @@ func mustJSON(t *testing.T, value any) []byte {
 }
 
 func postResourceUsage(t *testing.T, server http.Handler, body []byte) resourceUsageAPIResponse {
+	return postResourceUsageTo(t, server, "/api/v1/billing/resource-usage", body)
+}
+
+func postResourceUsageTo(t *testing.T, server http.Handler, target string, body []byte) resourceUsageAPIResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/resource-usage", bytes.NewReader(body)))
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, target, bytes.NewReader(body)))
 	response := resourceUsageAPIResponse{code: rec.Code, body: rec.Body.String()}
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.result); err != nil {
@@ -1432,9 +1575,13 @@ func postResourceUsage(t *testing.T, server http.Handler, body []byte) resourceU
 }
 
 func postSettlement(t *testing.T, server http.Handler, body []byte) settlementAPIResponse {
+	return postSettlementTo(t, server, "/api/v1/billing/settlements", body)
+}
+
+func postSettlementTo(t *testing.T, server http.Handler, target string, body []byte) settlementAPIResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/settlements", bytes.NewReader(body)))
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, target, bytes.NewReader(body)))
 	response := settlementAPIResponse{code: rec.Code, body: rec.Body.String()}
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.result); err != nil {
@@ -1445,9 +1592,13 @@ func postSettlement(t *testing.T, server http.Handler, body []byte) settlementAP
 }
 
 func postHold(t *testing.T, server http.Handler, body []byte) holdAPIResponse {
+	return postHoldTo(t, server, "/api/v1/billing/holds", body)
+}
+
+func postHoldTo(t *testing.T, server http.Handler, target string, body []byte) holdAPIResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/holds", bytes.NewReader(body)))
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, target, bytes.NewReader(body)))
 	response := holdAPIResponse{code: rec.Code, body: rec.Body.String()}
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.result); err != nil {
@@ -1458,13 +1609,30 @@ func postHold(t *testing.T, server http.Handler, body []byte) holdAPIResponse {
 }
 
 func postHoldRelease(t *testing.T, server http.Handler, body []byte) holdReleaseAPIResponse {
+	return postHoldReleaseTo(t, server, "/api/v1/billing/holds/release", body)
+}
+
+func postHoldReleaseTo(t *testing.T, server http.Handler, target string, body []byte) holdReleaseAPIResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/holds/release", bytes.NewReader(body)))
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, target, bytes.NewReader(body)))
 	response := holdReleaseAPIResponse{code: rec.Code, body: rec.Body.String()}
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.result); err != nil {
 			t.Fatalf("decode hold release response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func postEvidenceTo(t *testing.T, server http.Handler, target string, body []byte) evidenceAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, target, bytes.NewReader(body)))
+	response := evidenceAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.record); err != nil {
+			t.Fatalf("decode evidence response: %v body=%s", err, rec.Body.String())
 		}
 	}
 	return response
