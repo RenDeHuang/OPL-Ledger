@@ -84,13 +84,14 @@ Current executable coverage:
 - `manual_topups.preview.json`
 - `request_usage_logs.preview.json`
 - `request_usage_dedup.preview.json`
+- `resource_usage_logs.preview.json`
 - `audit_events.preview.json`
 - `migration-report.json`
 
 The remaining preview files in this document are still required before final
 cutover approval; this executable slice covers the manual top-up accounting loop
-and request usage replay inputs with their wallet/ledger/transaction/audit or
-dedup references.
+plus request and resource usage replay inputs with their
+wallet/ledger/transaction/audit or dedup references.
 
 ## Wallets
 
@@ -267,15 +268,18 @@ Mapping:
 - `workspaceId`
 - `computeId`
 - `storageId`
-- `attachmentId` in payload until table column support is added
+- `attachmentId`
 - `resourceType` -> `resource_kind`
 - quantity and unit
+- unit price, amount, requested amount, currency, and source event
 - full source payload
 
 Validation:
 
 - compute usage includes `computeId` and `workspaceId`.
 - storage usage includes `storageId`, optional `attachmentId`, and `workspaceId`.
+- resource usage includes a positive quantity, unit, and source event id.
+- `resource_usage_logs.source_event_id` is unique when present.
 
 ## Audit
 

@@ -76,6 +76,10 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	resourceUsageLogs, err := r.readRecords("resourceUsageLogs.json", "resourceUsageLogs")
+	if err != nil {
+		return Report{}, err
+	}
 	auditEvents, err := r.readRecords("audit.json", "audit")
 	if err != nil {
 		return Report{}, err
@@ -87,10 +91,12 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 	topupPreview := r.mapManualTopups(manualTopups)
 	requestUsagePreview := r.mapRequestUsageLogs(requestUsageLogs)
 	requestUsageDedupPreview := r.mapRequestUsageDedup(requestUsageDedup)
+	resourceUsagePreview := r.mapResourceUsageLogs(resourceUsageLogs)
 	auditPreview := r.mapAuditEvents(auditEvents)
 	r.validateWallets(walletPreview)
 	r.validateManualTopups(topupPreview, ledgerPreview, transactionPreview, auditPreview)
 	r.validateRequestUsageDedup(requestUsagePreview, requestUsageDedupPreview)
+	r.validateResourceUsage(resourceUsagePreview)
 
 	if err := r.writePreview("wallets.preview.json", walletPreview); err != nil {
 		return Report{}, err
@@ -108,6 +114,9 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 		return Report{}, err
 	}
 	if err := r.writePreview("request_usage_dedup.preview.json", requestUsageDedupPreview); err != nil {
+		return Report{}, err
+	}
+	if err := r.writePreview("resource_usage_logs.preview.json", resourceUsagePreview); err != nil {
 		return Report{}, err
 	}
 	if err := r.writePreview("audit_events.preview.json", auditPreview); err != nil {
@@ -277,6 +286,36 @@ func (r *dryRun) mapRequestUsageDedup(records []map[string]any) []map[string]any
 	return out
 }
 
+func (r *dryRun) mapResourceUsageLogs(records []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		amountCents := r.money(record, "amount_cents", "amountCents", "amount")
+		requestedCents := r.money(record, "requested_cents", "requestedCents", "requestedAmountCents", "requestedAmount")
+		if requestedCents == 0 {
+			requestedCents = amountCents
+		}
+		out = append(out, map[string]any{
+			"id":               stringValue(record, "id"),
+			"account_id":       stringValue(record, "accountId", "account_id"),
+			"user_id":          stringValue(record, "userId", "user_id"),
+			"workspace_id":     stringValue(record, "workspaceId", "workspace_id"),
+			"compute_id":       stringValue(record, "computeId", "compute_id"),
+			"storage_id":       stringValue(record, "storageId", "storage_id"),
+			"attachment_id":    stringValue(record, "attachmentId", "attachment_id"),
+			"resource_kind":    stringValue(record, "resourceKind", "resource_kind", "resourceType", "resource_type"),
+			"quantity":         int64Field(record, "quantity"),
+			"unit":             stringValue(record, "unit"),
+			"unit_price_cents": r.money(record, "unit_price_cents", "unitPriceCents", "unitPrice"),
+			"amount_cents":     amountCents,
+			"requested_cents":  requestedCents,
+			"currency":         defaultString(stringValue(record, "currency"), "CNY"),
+			"source_event_id":  stringValue(record, "sourceEventId", "source_event_id"),
+			"payload":          cloneMap(record),
+		})
+	}
+	return out
+}
+
 func (r *dryRun) mapAuditEvents(records []map[string]any) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
@@ -364,6 +403,46 @@ func (r *dryRun) requireRequestUsageEqual(message string, left map[string]any, l
 func (r *dryRun) requestUsageDedupMismatch(message string) {
 	r.mismatch(message)
 	r.block("request_usage_dedup_inconsistent")
+}
+
+func (r *dryRun) validateResourceUsage(logs []map[string]any) {
+	sourceSeen := map[string]bool{}
+	for _, log := range logs {
+		source := fmt.Sprint(log["source_event_id"])
+		kind := fmt.Sprint(log["resource_kind"])
+		if fmt.Sprint(log["workspace_id"]) == "" {
+			r.resourceUsageInvalid("resource usage missing workspace id: " + fmt.Sprint(log["id"]))
+		}
+		if source == "" {
+			r.resourceUsageInvalid("resource usage missing source event id: " + fmt.Sprint(log["id"]))
+		} else if sourceSeen[source] {
+			r.resourceUsageInvalid("duplicate resource usage source event id: " + source)
+		}
+		sourceSeen[source] = true
+		if kind != "compute" && kind != "storage" {
+			r.resourceUsageInvalid("resource usage kind unsupported: " + kind)
+		}
+		if kind == "compute" && fmt.Sprint(log["compute_id"]) == "" {
+			r.resourceUsageInvalid("compute resource usage missing compute id: " + fmt.Sprint(log["id"]))
+		}
+		if kind == "storage" && fmt.Sprint(log["storage_id"]) == "" {
+			r.resourceUsageInvalid("storage resource usage missing storage id: " + fmt.Sprint(log["id"]))
+		}
+		if int64Value(log["quantity"]) <= 0 {
+			r.resourceUsageInvalid("resource usage quantity must be positive: " + fmt.Sprint(log["id"]))
+		}
+		if fmt.Sprint(log["unit"]) == "" {
+			r.resourceUsageInvalid("resource usage missing unit: " + fmt.Sprint(log["id"]))
+		}
+		if int64Value(log["unit_price_cents"]) < 0 || int64Value(log["amount_cents"]) < 0 || int64Value(log["requested_cents"]) < 0 {
+			r.resourceUsageInvalid("resource usage money must be non-negative: " + fmt.Sprint(log["id"]))
+		}
+	}
+}
+
+func (r *dryRun) resourceUsageInvalid(message string) {
+	r.mismatch(message)
+	r.block("resource_usage_invalid")
 }
 
 func (r *dryRun) validateWallets(wallets []map[string]any) {

@@ -279,6 +279,96 @@ func TestDryRunPreviewFailsOnInconsistentRequestUsageDedup(t *testing.T) {
 	assertContains(t, report.BlockedReasons, "request_usage_dedup_inconsistent")
 }
 
+func TestDryRunPreviewMapsResourceUsageLogs(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageDedup.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "resourceUsageLogs.json", []map[string]any{
+		{
+			"id":             "res_usage_1",
+			"accountId":      "acct_1",
+			"userId":         "usr_1",
+			"workspaceId":    "ws_1",
+			"computeId":      "compute_1",
+			"resourceKind":   "compute",
+			"quantity":       1,
+			"unit":           "hour",
+			"unitPriceCents": 47,
+			"amountCents":    47,
+			"requestedCents": 47,
+			"sourceEventId":  "resource_usage:compute_1:tick_1",
+		},
+		{
+			"id":             "res_usage_2",
+			"accountId":      "acct_1",
+			"userId":         "usr_1",
+			"workspaceId":    "ws_1",
+			"storageId":      "storage_1",
+			"attachmentId":   "attach_1",
+			"resourceType":   "storage",
+			"quantity":       7,
+			"unit":           "gb_hour",
+			"unitPriceCents": 3,
+			"amount":         0.21,
+			"sourceEventId":  "resource_usage:storage_1:tick_1",
+		},
+	})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "pass" {
+		t.Fatalf("report status = %q mismatches=%+v blocked=%+v", report.Status, report.Mismatches, report.BlockedReasons)
+	}
+	if report.RowCounts["resource_usage_logs.preview.json"] != 2 {
+		t.Fatalf("row counts = %+v", report.RowCounts)
+	}
+	logs := readJSONArray(t, outputDir, "resource_usage_logs.preview.json")
+	if logs[0]["resource_kind"] != "compute" || logs[0]["amount_cents"] != float64(47) || logs[0]["requested_cents"] != float64(47) {
+		t.Fatalf("compute resource usage preview = %+v", logs[0])
+	}
+	if logs[1]["resource_kind"] != "storage" || logs[1]["attachment_id"] != "attach_1" || logs[1]["amount_cents"] != float64(21) || logs[1]["requested_cents"] != float64(21) {
+		t.Fatalf("storage resource usage preview = %+v", logs[1])
+	}
+}
+
+func TestDryRunPreviewFailsOnInvalidResourceUsageLogs(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageDedup.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "resourceUsageLogs.json", []map[string]any{{
+		"id":            "res_usage_1",
+		"workspaceId":   "ws_1",
+		"resourceKind":  "compute",
+		"quantity":      1,
+		"unit":          "hour",
+		"amountCents":   47,
+		"sourceEventId": "resource_usage:missing_compute:tick_1",
+	}})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "fail" {
+		t.Fatalf("report status = %q", report.Status)
+	}
+	assertContains(t, report.BlockedReasons, "resource_usage_invalid")
+}
+
 func TestDryRunPreviewFailsOnDuplicateTopUpSourceAndMissingReferences(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
