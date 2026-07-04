@@ -17,6 +17,7 @@ type MemoryStore struct {
 	wallets               map[string]wallet.Wallet
 	walletTransactions    []wallet.Transaction
 	manualTopUps          []ManualTopUp
+	requestUsageLogs      []RequestUsageLog
 	auditEvents           []AuditEvent
 	taskReceipts          []TaskReceipt
 	reconciliationReports []ReconciliationReport
@@ -24,17 +25,21 @@ type MemoryStore struct {
 	byRequestFingerprint  map[string]Entry
 	topUpsBySourceEvent   map[string]ManualTopUp
 	transactionsBySource  map[string]wallet.Transaction
+	requestUsageBySource  map[string]RequestUsageResult
+	requestUsageByRequest map[string]RequestUsageResult
 	auditBySourceEvent    map[string]AuditEvent
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		bySourceEvent:        map[string]Entry{},
-		byRequestFingerprint: map[string]Entry{},
-		wallets:              map[string]wallet.Wallet{},
-		topUpsBySourceEvent:  map[string]ManualTopUp{},
-		transactionsBySource: map[string]wallet.Transaction{},
-		auditBySourceEvent:   map[string]AuditEvent{},
+		bySourceEvent:         map[string]Entry{},
+		byRequestFingerprint:  map[string]Entry{},
+		wallets:               map[string]wallet.Wallet{},
+		topUpsBySourceEvent:   map[string]ManualTopUp{},
+		transactionsBySource:  map[string]wallet.Transaction{},
+		requestUsageBySource:  map[string]RequestUsageResult{},
+		requestUsageByRequest: map[string]RequestUsageResult{},
+		auditBySourceEvent:    map[string]AuditEvent{},
 	}
 }
 
@@ -261,6 +266,159 @@ func (s *MemoryStore) ManualTopUp(_ context.Context, input ManualTopUpInput) (Ma
 		AuditEvent:  audit,
 		Created:     true,
 	}, nil
+}
+
+func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageInput) (RequestUsageResult, error) {
+	if input.WorkspaceID == "" {
+		return RequestUsageResult{}, errors.New("workspace_required")
+	}
+	if input.RequestID == "" {
+		return RequestUsageResult{}, errors.New("request_required")
+	}
+	if input.AmountCents < 0 {
+		return RequestUsageResult{}, errors.New("non_negative_amount_required")
+	}
+	sourceEventID := input.SourceEventID
+	if sourceEventID == "" {
+		sourceEventID = "gateway_request:" + input.RequestID
+	}
+	requestKey := input.WorkspaceID + "\x00" + input.RequestID
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if existing, ok := s.requestUsageBySource[sourceEventID]; ok {
+		if existing.Log.RequestFingerprint != input.RequestFingerprint {
+			return RequestUsageResult{}, ErrIdempotencyConflict
+		}
+		existing.Created = false
+		return existing, nil
+	}
+	if existing, ok := s.requestUsageByRequest[requestKey]; ok {
+		if existing.Log.RequestFingerprint != input.RequestFingerprint {
+			return RequestUsageResult{}, ErrIdempotencyConflict
+		}
+		existing.Created = false
+		return existing, nil
+	}
+
+	accountID := input.AccountID
+	if accountID == "" {
+		accountID = "acct-" + input.WorkspaceID
+	}
+	w := s.wallets[accountID]
+	if w.AccountID == "" {
+		w.AccountID = accountID
+		w.UserID = input.UserID
+		if w.UserID == "" {
+			w.UserID = "usr-" + accountID
+		}
+	}
+	before := w.Snapshot()
+	charge := w.Charge("", input.AmountCents)
+	after := w.Snapshot()
+	createdAt := time.Now().UTC()
+
+	var entry Entry
+	var transaction wallet.Transaction
+	if charge.ChargedCents > 0 {
+		entry = Entry{
+			ID:                 randomID(),
+			EventType:          "request_debit",
+			AccountID:          accountID,
+			UserID:             w.UserID,
+			WorkspaceID:        input.WorkspaceID,
+			SourceEventID:      sourceEventID,
+			RequestFingerprint: input.RequestFingerprint,
+			AmountCents:        -charge.ChargedCents,
+			Currency:           "CNY",
+			CreatedAt:          createdAt,
+		}
+		transaction = wallet.NewTransaction(wallet.TransactionInput{
+			UserID:              w.UserID,
+			AccountID:           accountID,
+			WorkspaceID:         input.WorkspaceID,
+			Type:                wallet.TransactionDebit,
+			AmountCents:         -charge.ChargedCents,
+			Currency:            "CNY",
+			SourceEventID:       sourceEventID,
+			LedgerEntryID:       entry.ID,
+			FundingSource:       "available_balance",
+			BalanceBeforeCents:  before.BalanceCents,
+			BalanceAfterCents:   after.BalanceCents,
+			FrozenBeforeCents:   before.FrozenCents,
+			FrozenAfterCents:    after.FrozenCents,
+			AvailableAfterCents: after.AvailableCents,
+			Metadata: map[string]any{
+				"requestId":          input.RequestID,
+				"provider":           input.Provider,
+				"model":              input.Model,
+				"requestFingerprint": input.RequestFingerprint,
+			},
+			CreatedAt: createdAt,
+		})
+	}
+	log := RequestUsageLog{
+		ID:                   randomScopedID("usage"),
+		UserID:               w.UserID,
+		AccountID:            accountID,
+		WorkspaceID:          input.WorkspaceID,
+		RequestID:            input.RequestID,
+		Provider:             input.Provider,
+		Model:                input.Model,
+		InputTokens:          input.InputTokens,
+		OutputTokens:         input.OutputTokens,
+		AmountCents:          charge.ChargedCents,
+		RequestedAmountCents: input.AmountCents,
+		UnpaidCents:          input.AmountCents - charge.ChargedCents,
+		Currency:             "CNY",
+		SourceEventID:        sourceEventID,
+		RequestFingerprint:   input.RequestFingerprint,
+		CreatedAt:            createdAt,
+	}
+	if entry.ID != "" {
+		log.LedgerEntryID = entry.ID
+		transaction.UsageLogID = log.ID
+	}
+	audit := AuditEvent{
+		ID:            randomScopedID("aud"),
+		AccountID:     accountID,
+		WorkspaceID:   input.WorkspaceID,
+		ActorID:       w.UserID,
+		Action:        "billing.request_usage_recorded",
+		TargetKind:    "request_usage",
+		TargetID:      log.ID,
+		SourceEventID: sourceEventID,
+		Payload: map[string]any{
+			"requestId":          input.RequestID,
+			"requestFingerprint": input.RequestFingerprint,
+			"requestedAmount":    input.AmountCents,
+			"chargedAmount":      charge.ChargedCents,
+		},
+		CreatedAt: createdAt,
+	}
+
+	s.wallets[accountID] = w
+	if entry.ID != "" {
+		s.entries = append(s.entries, entry)
+		s.bySourceEvent[sourceEventID] = entry
+		s.byRequestFingerprint[input.RequestFingerprint] = entry
+		s.walletTransactions = append(s.walletTransactions, transaction)
+		s.transactionsBySource[sourceEventID] = transaction
+	}
+	s.requestUsageLogs = append(s.requestUsageLogs, log)
+	s.auditEvents = append(s.auditEvents, audit)
+	s.auditBySourceEvent[audit.SourceEventID] = audit
+	result := RequestUsageResult{
+		Log:         log,
+		Wallet:      after,
+		Entry:       entry,
+		Transaction: transaction,
+		AuditEvent:  audit,
+		Created:     true,
+	}
+	s.requestUsageBySource[sourceEventID] = result
+	s.requestUsageByRequest[requestKey] = result
+	return result, nil
 }
 
 func sameReplayPayload(entry Entry, input AppendEntryInput) bool {

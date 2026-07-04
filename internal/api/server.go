@@ -65,7 +65,7 @@ func (s *Server) appendEntry(w http.ResponseWriter, r *http.Request) {
 	if !result.Created {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, result.Entry)
+	writeJSON(w, status, result)
 }
 
 func (s *Server) listEntries(w http.ResponseWriter, r *http.Request) {
@@ -105,19 +105,7 @@ func (s *Server) manualTopUp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) recordRequestUsage(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		AccountID          string `json:"accountId"`
-		UserID             string `json:"userId"`
-		WorkspaceID        string `json:"workspaceId"`
-		RequestID          string `json:"requestId"`
-		Provider           string `json:"provider"`
-		Model              string `json:"model"`
-		InputTokens        int64  `json:"inputTokens"`
-		OutputTokens       int64  `json:"outputTokens"`
-		AmountCents        int64  `json:"amountCents"`
-		SourceEventID      string `json:"sourceEventId"`
-		RequestFingerprint string `json:"requestFingerprint"`
-	}
+	var input ledger.RequestUsageInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
 		return
@@ -142,16 +130,9 @@ func (s *Server) recordRequestUsage(w http.ResponseWriter, r *http.Request) {
 	if fingerprint == "" {
 		fingerprint = requestUsageFingerprint(input.Provider, input.Model, input.InputTokens, input.OutputTokens, input.AmountCents, sourceEventID)
 	}
-	result, err := s.store.AppendEntry(r.Context(), ledger.AppendEntryInput{
-		EventType:          "request_debit",
-		AccountID:          input.AccountID,
-		UserID:             input.UserID,
-		WorkspaceID:        input.WorkspaceID,
-		SourceEventID:      sourceEventID,
-		RequestFingerprint: fingerprint,
-		AmountCents:        -input.AmountCents,
-		Currency:           "CNY",
-	})
+	input.SourceEventID = sourceEventID
+	input.RequestFingerprint = fingerprint
+	result, err := s.store.RecordRequestUsage(r.Context(), input)
 	if err != nil {
 		writeAppendError(w, err)
 		return
@@ -160,7 +141,7 @@ func (s *Server) recordRequestUsage(w http.ResponseWriter, r *http.Request) {
 	if !result.Created {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, result.Entry)
+	writeJSON(w, status, result)
 }
 
 func (s *Server) recordTaskReceipt(w http.ResponseWriter, r *http.Request) {

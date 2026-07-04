@@ -93,6 +93,34 @@ func TestInitialMigrationDefinesWalletTransactionAndTopUpAuditFields(t *testing.
 	}
 }
 
+func TestInitialMigrationDefinesRequestUsageDedupAndBillingFields(t *testing.T) {
+	sqlBytes, err := Migrations.ReadFile("migrations/0001_initial.sql")
+	if err != nil {
+		t.Fatalf("read initial migration: %v", err)
+	}
+	sql := string(sqlBytes)
+	required := []string{
+		"request_id TEXT",
+		"source_event_id TEXT",
+		"provider TEXT",
+		"model TEXT",
+		"input_tokens BIGINT NOT NULL DEFAULT 0",
+		"output_tokens BIGINT NOT NULL DEFAULT 0",
+		"amount_cents BIGINT NOT NULL DEFAULT 0",
+		"requested_amount_cents BIGINT NOT NULL DEFAULT 0",
+		"unpaid_cents BIGINT NOT NULL DEFAULT 0",
+		"ledger_entry_id TEXT REFERENCES ledger_entries(id)",
+		"CREATE TABLE IF NOT EXISTS request_usage_dedup",
+		"CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_source_idx",
+		"CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_request_idx",
+	}
+	for _, needle := range required {
+		if !strings.Contains(sql, needle) {
+			t.Fatalf("migration missing %q", needle)
+		}
+	}
+}
+
 func TestInitialMigrationUsesTextIDsForGeneratedLedgerIDs(t *testing.T) {
 	sqlBytes, err := Migrations.ReadFile("migrations/0001_initial.sql")
 	if err != nil {

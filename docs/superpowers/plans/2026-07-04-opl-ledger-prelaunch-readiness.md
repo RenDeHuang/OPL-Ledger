@@ -123,9 +123,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `internal/ledger/postgres_store.go`
 - Modify: `internal/db/migrations/0001_initial.sql`
 
-- [ ] Test same request fingerprint returns existing usage row.
-- [ ] Test conflicting replay returns conflict.
-- [ ] Test request usage writes dedup row before wallet mutation.
+- [x] Test same request fingerprint returns existing usage row.
+- [x] Test conflicting replay returns conflict.
+- [x] Test request usage writes dedup row before wallet mutation.
 
 ### Task 10: Implement Request Quota Checks
 
@@ -142,8 +142,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/usage/request_usage_test.go`
 - Create: `internal/usage/request_usage.go`
 
-- [ ] Test successful request writes request usage log, request debit ledger entry, wallet transaction, and audit event.
-- [ ] Test amount is bounded by available balance rules.
+- [x] Test successful request writes request usage log, request debit ledger entry, wallet transaction, and audit event.
+- [x] Test amount is bounded by available balance rules.
 
 ### Task 12: Implement Prepaid Hold Calculation
 

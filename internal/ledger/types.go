@@ -161,3 +161,46 @@ type AuditEvent struct {
 	Payload       map[string]any `json:"payload,omitempty"`
 	CreatedAt     time.Time      `json:"createdAt"`
 }
+
+type RequestUsageInput struct {
+	AccountID          string `json:"accountId,omitempty"`
+	UserID             string `json:"userId,omitempty"`
+	WorkspaceID        string `json:"workspaceId"`
+	RequestID          string `json:"requestId"`
+	Provider           string `json:"provider,omitempty"`
+	Model              string `json:"model,omitempty"`
+	InputTokens        int64  `json:"inputTokens,omitempty"`
+	OutputTokens       int64  `json:"outputTokens,omitempty"`
+	AmountCents        int64  `json:"amountCents"`
+	SourceEventID      string `json:"sourceEventId,omitempty"`
+	RequestFingerprint string `json:"requestFingerprint,omitempty"`
+}
+
+type RequestUsageResult struct {
+	Log         RequestUsageLog    `json:"log"`
+	Wallet      wallet.Snapshot    `json:"wallet"`
+	Entry       Entry              `json:"entry,omitempty"`
+	Transaction wallet.Transaction `json:"transaction,omitempty"`
+	AuditEvent  AuditEvent         `json:"auditEvent"`
+	Created     bool               `json:"created"`
+}
+
+type RequestUsageLog struct {
+	ID                   string    `json:"id"`
+	UserID               string    `json:"userId,omitempty"`
+	AccountID            string    `json:"accountId"`
+	WorkspaceID          string    `json:"workspaceId"`
+	RequestID            string    `json:"requestId"`
+	Provider             string    `json:"provider,omitempty"`
+	Model                string    `json:"model,omitempty"`
+	InputTokens          int64     `json:"inputTokens"`
+	OutputTokens         int64     `json:"outputTokens"`
+	AmountCents          int64     `json:"amountCents"`
+	RequestedAmountCents int64     `json:"requestedAmountCents"`
+	UnpaidCents          int64     `json:"unpaidCents"`
+	Currency             string    `json:"currency"`
+	SourceEventID        string    `json:"sourceEventId"`
+	RequestFingerprint   string    `json:"requestFingerprint"`
+	LedgerEntryID        string    `json:"ledgerEntryId,omitempty"`
+	CreatedAt            time.Time `json:"createdAt"`
+}

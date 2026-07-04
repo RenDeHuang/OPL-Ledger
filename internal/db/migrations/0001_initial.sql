@@ -79,12 +79,41 @@ CREATE TABLE IF NOT EXISTS request_usage_logs (
   account_id TEXT,
   user_id TEXT,
   workspace_id TEXT,
+  request_id TEXT,
+  source_event_id TEXT,
   request_fingerprint TEXT NOT NULL,
+  provider TEXT,
+  model TEXT,
+  input_tokens BIGINT NOT NULL DEFAULT 0,
+  output_tokens BIGINT NOT NULL DEFAULT 0,
+  amount_cents BIGINT NOT NULL DEFAULT 0,
+  requested_amount_cents BIGINT NOT NULL DEFAULT 0,
+  unpaid_cents BIGINT NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  ledger_entry_id TEXT REFERENCES ledger_entries(id),
   units BIGINT NOT NULL DEFAULT 1,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(request_fingerprint)
 );
+
+CREATE TABLE IF NOT EXISTS request_usage_dedup (
+  id TEXT PRIMARY KEY,
+  account_id TEXT,
+  user_id TEXT,
+  workspace_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  source_event_id TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  usage_log_id TEXT REFERENCES request_usage_logs(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_source_idx
+  ON request_usage_dedup(workspace_id, source_event_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_request_idx
+  ON request_usage_dedup(workspace_id, request_id);
 
 CREATE TABLE IF NOT EXISTS resource_usage_logs (
   id TEXT PRIMARY KEY,

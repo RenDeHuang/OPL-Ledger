@@ -225,6 +225,66 @@ func TestPostgresStoreManualTopUpReplayReturnsExistingAccountingLoop(t *testing.
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreRecordRequestUsageWritesDedupAndDebitLoopInOneTransaction(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT usage_log_id, request_fingerprint\s+FROM request_usage_dedup`).
+		WithArgs("ws_1", "gateway_req_1", "req_1").
+		WillReturnRows(sqlmock.NewRows([]string{"usage_log_id", "request_fingerprint"}))
+	mock.ExpectExec(`INSERT INTO request_usage_dedup`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "req_1", "gateway_req_1", "fp_1", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds`).
+		WithArgs("acct_1").
+		WillReturnRows(walletRows().AddRow("wal_1", "usr_1", "acct_1", int64(25000), int64(0), int64(25000), []byte(`{}`), createdAt, createdAt))
+	mock.ExpectExec(`INSERT INTO ledger_entries`).
+		WithArgs(sqlmock.AnyArg(), "request_debit", "acct_1", "usr_1", "ws_1", "", "", "", "gateway_req_1", "fp_1", int64(-25), "CNY", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallet_transactions`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "debit", int64(-25), "CNY", "gateway_req_1", sqlmock.AnyArg(), sqlmock.AnyArg(), "available_balance", int64(25000), int64(24975), int64(0), int64(0), int64(24975), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO request_usage_logs`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "req_1", "gateway_req_1", "fp_1", "openai", "gpt-5", int64(1000), int64(500), int64(25), int64(25), int64(0), "CNY", sqlmock.AnyArg(), int64(1), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE request_usage_dedup`).
+		WithArgs("acct_1", "usr_1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO audit_events`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "ws_1", "usr_1", "billing.request_usage_recorded", "request_usage", sqlmock.AnyArg(), "gateway_req_1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(sqlmock.AnyArg(), "usr_1", "acct_1", int64(24975), int64(0), int64(25000), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := store.RecordRequestUsage(context.Background(), RequestUsageInput{
+		AccountID:          "acct_1",
+		UserID:             "usr_1",
+		WorkspaceID:        "ws_1",
+		RequestID:          "req_1",
+		Provider:           "openai",
+		Model:              "gpt-5",
+		InputTokens:        1000,
+		OutputTokens:       500,
+		AmountCents:        25,
+		SourceEventID:      "gateway_req_1",
+		RequestFingerprint: "fp_1",
+	})
+	if err != nil {
+		t.Fatalf("record request usage: %v", err)
+	}
+	if !result.Created {
+		t.Fatalf("expected created result")
+	}
+	if result.Wallet.BalanceCents != 24975 || result.Log.AmountCents != 25 || result.Transaction.UsageLogID != result.Log.ID || result.Entry.AmountCents != -25 {
+		t.Fatalf("unexpected request usage result: %+v", result)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()

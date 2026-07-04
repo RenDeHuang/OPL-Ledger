@@ -97,19 +97,31 @@ Status: implemented, idempotency still planned.
 
 Purpose: list task receipts by account/workspace/task.
 
-## Partial
-
 ### `POST /api/v1/billing/request-usage`
 
 Purpose: record request usage and debit available wallet balance.
 
-Current status: partial. It appends an idempotent `request_debit` ledger entry, but the complete SQL transaction still needs request usage dedup row, quota check, wallet mutation, wallet transaction, and audit event.
+Status: implemented for request usage dedup and available-balance billing. Quota rejection is still planned.
+
+Source behavior: `/home/dev/medopl-3/packages/console/src/services/billing-service.js#recordRequestUsage`.
+
+Idempotency: `workspaceId + sourceEventId` and `workspaceId + requestId` are replay keys. `requestFingerprint` must match on replay.
+
+Persistence requirements:
+
+- `request_usage_dedup` is inserted before wallet mutation.
+- `wallets` snapshot is debited from available balance only.
+- `request_usage_logs` records requested, charged, and unpaid cents.
+- Positive charged amount writes a `request_debit` ledger entry.
+- Positive charged amount writes a `debit` wallet transaction linked to the usage log and ledger entry.
+- `audit_events` records `billing.request_usage_recorded`.
+- PostgreSQL path performs these writes in one SQL transaction.
 
 ## Planned
 
 - Wallet read API.
 - Wallet transaction list API.
-- Request usage complete transaction and quota rejection.
+- Request quota rejection without wallet mutation.
 - Compute/storage hold create/release APIs.
 - Hourly settlement API.
 - Reconciliation guard API.

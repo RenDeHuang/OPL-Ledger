@@ -15,6 +15,7 @@ import (
 type Store interface {
 	AppendEntry(context.Context, AppendEntryInput) (AppendEntryResult, error)
 	ManualTopUp(context.Context, ManualTopUpInput) (ManualTopUpResult, error)
+	RecordRequestUsage(context.Context, RequestUsageInput) (RequestUsageResult, error)
 	ListEntries(context.Context, EntryFilter) ([]Entry, error)
 	Summary(context.Context, EntryFilter) (Summary, error)
 	AppendTaskReceipt(context.Context, TaskReceiptInput) (TaskReceipt, error)
@@ -418,6 +419,340 @@ func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput)
 	}, nil
 }
 
+func (s *PostgresStore) RecordRequestUsage(ctx context.Context, input RequestUsageInput) (RequestUsageResult, error) {
+	if input.WorkspaceID == "" {
+		return RequestUsageResult{}, errors.New("workspace_required")
+	}
+	if input.RequestID == "" {
+		return RequestUsageResult{}, errors.New("request_required")
+	}
+	if input.AmountCents < 0 {
+		return RequestUsageResult{}, errors.New("non_negative_amount_required")
+	}
+	sourceEventID := input.SourceEventID
+	if sourceEventID == "" {
+		sourceEventID = "gateway_request:" + input.RequestID
+	}
+	if input.RequestFingerprint == "" {
+		input.RequestFingerprint = sourceEventID
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	usageLogID, fingerprint, found, err := s.requestUsageDedup(ctx, tx, input.WorkspaceID, sourceEventID, input.RequestID)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	if found {
+		if fingerprint != input.RequestFingerprint {
+			return RequestUsageResult{}, ErrIdempotencyConflict
+		}
+		result, err := s.loadRequestUsageResult(ctx, tx, input.AccountID, sourceEventID, usageLogID)
+		if err != nil {
+			return RequestUsageResult{}, err
+		}
+		result.Created = false
+		if err := tx.Commit(); err != nil {
+			return RequestUsageResult{}, err
+		}
+		committed = true
+		return result, nil
+	}
+
+	accountID := input.AccountID
+	if accountID == "" {
+		accountID = "acct-" + input.WorkspaceID
+	}
+	createdAt := nowUTC()
+	logID := randomScopedID("usage")
+	dedupID := randomScopedID("dedup")
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO request_usage_dedup (
+			id, account_id, user_id, workspace_id, request_id, source_event_id, request_fingerprint, created_at
+		) VALUES (
+			$1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, $6, $7, $8
+		)`,
+		dedupID,
+		accountID,
+		input.UserID,
+		input.WorkspaceID,
+		input.RequestID,
+		sourceEventID,
+		input.RequestFingerprint,
+		createdAt,
+	)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+
+	w, walletFound, err := s.walletForUpdate(ctx, tx, accountID)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	if !walletFound {
+		w = wallet.Wallet{
+			UserID:    input.UserID,
+			AccountID: accountID,
+			Holds:     map[string]int64{},
+		}
+		if w.UserID == "" {
+			w.UserID = "usr-" + accountID
+		}
+	}
+	before := w.Snapshot()
+	charge := w.Charge("", input.AmountCents)
+	after := w.Snapshot()
+
+	var entry Entry
+	var transaction wallet.Transaction
+	if charge.ChargedCents > 0 {
+		entry = Entry{
+			ID:                 randomID(),
+			EventType:          "request_debit",
+			AccountID:          accountID,
+			UserID:             w.UserID,
+			WorkspaceID:        input.WorkspaceID,
+			SourceEventID:      sourceEventID,
+			RequestFingerprint: input.RequestFingerprint,
+			AmountCents:        -charge.ChargedCents,
+			Currency:           "CNY",
+			CreatedAt:          createdAt,
+		}
+		entryPayload, err := json.Marshal(map[string]any{
+			"requestId":          input.RequestID,
+			"provider":           input.Provider,
+			"model":              input.Model,
+			"inputTokens":        input.InputTokens,
+			"outputTokens":       input.OutputTokens,
+			"requestedAmount":    input.AmountCents,
+			"fundingSource":      "available_balance",
+			"requestFingerprint": input.RequestFingerprint,
+			"usageLogId":         logID,
+		})
+		if err != nil {
+			return RequestUsageResult{}, err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO ledger_entries (
+				id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id,
+				source_event_id, request_fingerprint, amount_cents, currency, payload, created_at
+			) VALUES (
+				$1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''),
+				NULLIF($9, ''), NULLIF($10, ''), $11, $12, $13, $14
+			)`,
+			entry.ID,
+			entry.EventType,
+			entry.AccountID,
+			entry.UserID,
+			entry.WorkspaceID,
+			entry.ComputeID,
+			entry.StorageID,
+			entry.AttachmentID,
+			entry.SourceEventID,
+			entry.RequestFingerprint,
+			entry.AmountCents,
+			entry.Currency,
+			entryPayload,
+			entry.CreatedAt,
+		)
+		if err != nil {
+			return RequestUsageResult{}, err
+		}
+		transaction = wallet.NewTransaction(wallet.TransactionInput{
+			UserID:              w.UserID,
+			AccountID:           accountID,
+			WorkspaceID:         input.WorkspaceID,
+			Type:                wallet.TransactionDebit,
+			AmountCents:         -charge.ChargedCents,
+			Currency:            "CNY",
+			SourceEventID:       sourceEventID,
+			LedgerEntryID:       entry.ID,
+			UsageLogID:          logID,
+			FundingSource:       "available_balance",
+			BalanceBeforeCents:  before.BalanceCents,
+			BalanceAfterCents:   after.BalanceCents,
+			FrozenBeforeCents:   before.FrozenCents,
+			FrozenAfterCents:    after.FrozenCents,
+			AvailableAfterCents: after.AvailableCents,
+			Metadata: map[string]any{
+				"requestId":          input.RequestID,
+				"provider":           input.Provider,
+				"model":              input.Model,
+				"requestFingerprint": input.RequestFingerprint,
+			},
+			CreatedAt: createdAt,
+		})
+		transactionPayload, err := json.Marshal(transaction)
+		if err != nil {
+			return RequestUsageResult{}, err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO wallet_transactions (
+				id, account_id, user_id, workspace_id, transaction_type, amount_cents, currency, source_event_id,
+				ledger_entry_id, usage_log_id, funding_source, balance_before_cents, balance_after_cents,
+				frozen_before_cents, frozen_after_cents, available_after_cents, payload, created_at
+			) VALUES (
+				$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, NULLIF($8, ''),
+				NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), $12, $13, $14, $15, $16, $17, $18
+			)`,
+			transaction.ID,
+			transaction.AccountID,
+			transaction.UserID,
+			transaction.WorkspaceID,
+			string(transaction.Type),
+			transaction.AmountCents,
+			transaction.Currency,
+			transaction.SourceEventID,
+			transaction.LedgerEntryID,
+			transaction.UsageLogID,
+			transaction.FundingSource,
+			transaction.BalanceBeforeCents,
+			transaction.BalanceAfterCents,
+			transaction.FrozenBeforeCents,
+			transaction.FrozenAfterCents,
+			transaction.AvailableAfterCents,
+			transactionPayload,
+			transaction.CreatedAt,
+		)
+		if err != nil {
+			return RequestUsageResult{}, err
+		}
+	}
+
+	log := RequestUsageLog{
+		ID:                   logID,
+		UserID:               w.UserID,
+		AccountID:            accountID,
+		WorkspaceID:          input.WorkspaceID,
+		RequestID:            input.RequestID,
+		Provider:             input.Provider,
+		Model:                input.Model,
+		InputTokens:          input.InputTokens,
+		OutputTokens:         input.OutputTokens,
+		AmountCents:          charge.ChargedCents,
+		RequestedAmountCents: input.AmountCents,
+		UnpaidCents:          input.AmountCents - charge.ChargedCents,
+		Currency:             "CNY",
+		SourceEventID:        sourceEventID,
+		RequestFingerprint:   input.RequestFingerprint,
+		LedgerEntryID:        entry.ID,
+		CreatedAt:            createdAt,
+	}
+	logPayload, err := json.Marshal(log)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO request_usage_logs (
+			id, account_id, user_id, workspace_id, request_id, source_event_id, request_fingerprint,
+			provider, model, input_tokens, output_tokens, amount_cents, requested_amount_cents, unpaid_cents,
+			currency, ledger_entry_id, units, payload, created_at
+		) VALUES (
+			$1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, $6, $7,
+			NULLIF($8, ''), NULLIF($9, ''), $10, $11, $12, $13, $14,
+			$15, NULLIF($16, ''), $17, $18, $19
+		)`,
+		log.ID,
+		log.AccountID,
+		log.UserID,
+		log.WorkspaceID,
+		log.RequestID,
+		log.SourceEventID,
+		log.RequestFingerprint,
+		log.Provider,
+		log.Model,
+		log.InputTokens,
+		log.OutputTokens,
+		log.AmountCents,
+		log.RequestedAmountCents,
+		log.UnpaidCents,
+		log.Currency,
+		log.LedgerEntryID,
+		int64(1),
+		logPayload,
+		log.CreatedAt,
+	)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE request_usage_dedup
+		SET account_id = NULLIF($1, ''), user_id = NULLIF($2, ''), usage_log_id = $3
+		WHERE id = $4`,
+		accountID,
+		w.UserID,
+		log.ID,
+		dedupID,
+	)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	audit := AuditEvent{
+		ID:            randomScopedID("aud"),
+		AccountID:     accountID,
+		WorkspaceID:   input.WorkspaceID,
+		ActorID:       w.UserID,
+		Action:        "billing.request_usage_recorded",
+		TargetKind:    "request_usage",
+		TargetID:      log.ID,
+		SourceEventID: sourceEventID,
+		Payload: map[string]any{
+			"requestId":          input.RequestID,
+			"requestFingerprint": input.RequestFingerprint,
+			"requestedAmount":    input.AmountCents,
+			"chargedAmount":      charge.ChargedCents,
+		},
+		CreatedAt: createdAt,
+	}
+	auditPayload, err := json.Marshal(audit)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO audit_events (
+			id, account_id, workspace_id, actor_id, action, target_kind, target_id, source_event_id, payload, created_at
+		) VALUES (
+			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9, $10
+		)`,
+		audit.ID,
+		audit.AccountID,
+		audit.WorkspaceID,
+		audit.ActorID,
+		audit.Action,
+		audit.TargetKind,
+		audit.TargetID,
+		audit.SourceEventID,
+		auditPayload,
+		audit.CreatedAt,
+	)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	if err := s.upsertWallet(ctx, tx, w, after, createdAt); err != nil {
+		return RequestUsageResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RequestUsageResult{}, err
+	}
+	committed = true
+	return RequestUsageResult{
+		Log:         log,
+		Wallet:      after,
+		Entry:       entry,
+		Transaction: transaction,
+		AuditEvent:  audit,
+		Created:     true,
+	}, nil
+}
+
 func (s *PostgresStore) entriesForIdempotencyKeys(ctx context.Context, tx *sql.Tx, input AppendEntryInput) ([]Entry, error) {
 	rows, err := tx.QueryContext(ctx, selectLedgerEntryColumns+` FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`, input.SourceEventID, input.RequestFingerprint)
 	if err != nil {
@@ -500,6 +835,91 @@ func (s *PostgresStore) loadManualTopUpResult(ctx context.Context, tx *sql.Tx, a
 		TopUp:       topup,
 		AuditEvent:  audit,
 	}, nil
+}
+
+func (s *PostgresStore) requestUsageDedup(ctx context.Context, tx *sql.Tx, workspaceID string, sourceEventID string, requestID string) (string, string, bool, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT usage_log_id, request_fingerprint
+		FROM request_usage_dedup
+		WHERE workspace_id = $1 AND (source_event_id = $2 OR request_id = $3)
+		ORDER BY created_at, id
+		LIMIT 1`,
+		workspaceID,
+		sourceEventID,
+		requestID,
+	)
+	var usageLogID string
+	var fingerprint string
+	err := row.Scan(&usageLogID, &fingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return usageLogID, fingerprint, true, nil
+}
+
+func (s *PostgresStore) loadRequestUsageResult(ctx context.Context, tx *sql.Tx, accountID string, sourceEventID string, usageLogID string) (RequestUsageResult, error) {
+	log, err := loadRequestUsageLogByID(ctx, tx, usageLogID)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	if accountID == "" {
+		accountID = log.AccountID
+	}
+	w, _, err := s.walletForUpdate(ctx, tx, accountID)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	var entry Entry
+	if log.LedgerEntryID != "" {
+		entry, err = loadLedgerEntryByID(ctx, tx, log.LedgerEntryID)
+		if err != nil {
+			return RequestUsageResult{}, err
+		}
+	}
+	var transaction wallet.Transaction
+	if log.LedgerEntryID != "" {
+		transaction, err = loadWalletTransactionBySource(ctx, tx, sourceEventID)
+		if err != nil {
+			return RequestUsageResult{}, err
+		}
+	}
+	audit, err := loadAuditEventBySource(ctx, tx, sourceEventID)
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+	return RequestUsageResult{
+		Log:         log,
+		Wallet:      w.Snapshot(),
+		Entry:       entry,
+		Transaction: transaction,
+		AuditEvent:  audit,
+	}, nil
+}
+
+func loadRequestUsageLogByID(ctx context.Context, tx *sql.Tx, id string) (RequestUsageLog, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT payload
+		FROM request_usage_logs
+		WHERE id = $1`,
+		id,
+	)
+	var payload []byte
+	if err := row.Scan(&payload); err != nil {
+		return RequestUsageLog{}, err
+	}
+	var log RequestUsageLog
+	if err := json.Unmarshal(payload, &log); err != nil {
+		return RequestUsageLog{}, err
+	}
+	return log, nil
+}
+
+func loadLedgerEntryByID(ctx context.Context, tx *sql.Tx, id string) (Entry, error) {
+	row := tx.QueryRowContext(ctx, selectLedgerEntryColumns+` FROM ledger_entries WHERE id = $1`, id)
+	return scanEntry(row)
 }
 
 type walletScanner interface {

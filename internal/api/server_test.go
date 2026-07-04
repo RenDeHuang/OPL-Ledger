@@ -288,6 +288,16 @@ func TestManualTopUpAPIReplayDoesNotDoubleCredit(t *testing.T) {
 
 func TestRequestUsageAPIAppendsIdempotentRequestDebit(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
+	topup := httptest.NewRecorder()
+	server.ServeHTTP(topup, httptest.NewRequest(http.MethodPost, "/api/v1/billing/topups", bytes.NewReader([]byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":25000,
+		"reason":"owner_credit_1"
+	}`))))
+	if topup.Code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.Code, topup.Body.String())
+	}
 	body := []byte(`{
 		"accountId":"acct_1",
 		"userId":"usr_1",
@@ -310,15 +320,57 @@ func TestRequestUsageAPIAppendsIdempotentRequestDebit(t *testing.T) {
 	if second.Code != http.StatusOK {
 		t.Fatalf("second request usage status = %d body=%s", second.Code, second.Body.String())
 	}
-	var firstEntry ledger.Entry
-	var secondEntry ledger.Entry
-	_ = json.Unmarshal(first.Body.Bytes(), &firstEntry)
-	_ = json.Unmarshal(second.Body.Bytes(), &secondEntry)
-	if firstEntry.ID != secondEntry.ID {
-		t.Fatalf("expected idempotent request usage entry, got %q and %q", firstEntry.ID, secondEntry.ID)
+	var firstResult ledger.RequestUsageResult
+	var secondResult ledger.RequestUsageResult
+	_ = json.Unmarshal(first.Body.Bytes(), &firstResult)
+	_ = json.Unmarshal(second.Body.Bytes(), &secondResult)
+	if firstResult.Entry.ID != secondResult.Entry.ID {
+		t.Fatalf("expected idempotent request usage entry, got %q and %q", firstResult.Entry.ID, secondResult.Entry.ID)
 	}
-	if firstEntry.EventType != "request_debit" || firstEntry.AmountCents != -25 {
-		t.Fatalf("unexpected request usage entry: %+v", firstEntry)
+	if firstResult.Log.ID != secondResult.Log.ID {
+		t.Fatalf("expected same request usage log, got %q and %q", firstResult.Log.ID, secondResult.Log.ID)
+	}
+	if firstResult.Entry.EventType != "request_debit" || firstResult.Entry.AmountCents != -25 {
+		t.Fatalf("unexpected request usage entry: %+v", firstResult.Entry)
+	}
+	if firstResult.Transaction.AmountCents != -25 || firstResult.Transaction.LedgerEntryID != firstResult.Entry.ID || firstResult.Transaction.UsageLogID != firstResult.Log.ID {
+		t.Fatalf("unexpected request wallet transaction: %+v", firstResult.Transaction)
+	}
+	if firstResult.Log.AmountCents != 25 || firstResult.Log.UnpaidCents != 0 || firstResult.Log.LedgerEntryID != firstResult.Entry.ID {
+		t.Fatalf("unexpected request usage log: %+v", firstResult.Log)
+	}
+	if secondResult.Wallet.BalanceCents != 24975 || secondResult.Wallet.AvailableCents != 24975 {
+		t.Fatalf("wallet was double debited: %+v", secondResult.Wallet)
+	}
+	if firstResult.AuditEvent.Action != "billing.request_usage_recorded" {
+		t.Fatalf("unexpected audit event: %+v", firstResult.AuditEvent)
+	}
+}
+
+func TestRequestUsageAPIConflictingReplayReturnsConflict(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"requestId":"req_1",
+		"provider":"openai",
+		"model":"gpt-5",
+		"inputTokens":1000,
+		"outputTokens":500,
+		"amountCents":25,
+		"sourceEventId":"gateway_req_1"
+	}`)
+	first := httptest.NewRecorder()
+	server.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/api/v1/billing/request-usage", bytes.NewReader(body)))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first status = %d body=%s", first.Code, first.Body.String())
+	}
+	conflictBody := bytes.Replace(body, []byte(`"amountCents":25`), []byte(`"amountCents":35`), 1)
+	conflict := httptest.NewRecorder()
+	server.ServeHTTP(conflict, httptest.NewRequest(http.MethodPost, "/api/v1/billing/request-usage", bytes.NewReader(conflictBody)))
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("conflict status = %d body=%s", conflict.Code, conflict.Body.String())
 	}
 }
 
