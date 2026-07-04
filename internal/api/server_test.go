@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/RenDeHuang/OPL-Ledger/internal/ledger"
+	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
@@ -640,6 +641,36 @@ func TestSettlementAPIChargesAvailableBeforeComputeHoldAndReplays(t *testing.T) 
 	}
 }
 
+func TestResourceUsageAPIRecordsIdempotentComputeUsage(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"computeId":"compute_1",
+		"resourceKind":"compute",
+		"quantity":1,
+		"unit":"hour",
+		"unitPriceCents":47,
+		"amountCents":47,
+		"sourceEventId":"resource_usage:compute_1:billing_tick_1"
+	}`)
+	first := postResourceUsage(t, server, body)
+	if first.code != http.StatusCreated {
+		t.Fatalf("first resource usage status = %d body=%s", first.code, first.body)
+	}
+	second := postResourceUsage(t, server, body)
+	if second.code != http.StatusOK {
+		t.Fatalf("second resource usage status = %d body=%s", second.code, second.body)
+	}
+	if first.result.Log.ID != second.result.Log.ID {
+		t.Fatalf("expected replayed resource usage log")
+	}
+	if first.result.Log.ResourceKind != usage.ResourceKindCompute || first.result.Log.ComputeID != "compute_1" || first.result.Log.AmountCents != 47 {
+		t.Fatalf("unexpected resource usage log: %+v", first.result.Log)
+	}
+}
+
 func TestAuditEventAPIPostsAndQueriesEvents(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	body := []byte(`{
@@ -878,6 +909,15 @@ type settlementAPIResponse struct {
 	}
 }
 
+type resourceUsageAPIResponse struct {
+	code   int
+	body   string
+	result struct {
+		Log     usage.ResourceUsageLog `json:"log"`
+		Created bool                   `json:"created"`
+	}
+}
+
 func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppendResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -886,6 +926,19 @@ func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppen
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.entry); err != nil {
 			t.Fatalf("decode append response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func postResourceUsage(t *testing.T, server http.Handler, body []byte) resourceUsageAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/resource-usage", bytes.NewReader(body)))
+	response := resourceUsageAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.result); err != nil {
+			t.Fatalf("decode resource usage response: %v body=%s", err, rec.Body.String())
 		}
 	}
 	return response

@@ -127,7 +127,7 @@ Implemented:
 - 7-day compute/storage prepaid hold pricing calculation for Basic and Pro package inputs;
 - compute/storage hold create/release API with wallet frozen/available updates, ledger entries, wallet transactions, idempotent replay, and PostgreSQL transaction wiring;
 - hourly compute/storage settlement API with available-balance-first debit, hold capture, hold-exhaustion intents, idempotent replay, no-negative-balance behavior, wallet transactions, and PostgreSQL transaction wiring;
-- resource usage log business shape for compute/storage usage with workspace/resource ids;
+- resource usage log API with compute/storage/attachment/workspace ids, source-event idempotency, and PostgreSQL persistence;
 - audit events append/list API backed by PostgreSQL and in-memory stores;
 - evidence records append/list API backed by PostgreSQL and in-memory stores; evidence records stay out of billing ledger entries;
 - task receipt record/query with PostgreSQL `accountId/workspaceId/taskId/sourceEventId` idempotency;
@@ -147,7 +147,6 @@ Not complete:
 
 - wallet transaction listing and reconciliation queries;
 - persisted request quota management API; current request usage accepts Console-provided quota snapshots and records the incremented quota in the usage log payload;
-- resource usage log API/PostgreSQL transaction wiring;
 - external Kubernetes evidence snapshot API;
 - Console/Fabric integration;
 - executed and approved data migration from current Console state.

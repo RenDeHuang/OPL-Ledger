@@ -222,6 +222,58 @@ Persistence requirements:
 - Exhausted or unpaid storage returns a `storage_hold_exhausted` intent.
 - PostgreSQL path performs these writes in one SQL transaction.
 
+### `POST /api/v1/billing/resource-usage`
+
+Purpose: persist compute/storage resource usage rows for billing evidence and reconciliation.
+
+Status: implemented for compute/storage usage logs, workspace/resource/attachment ids, source-event idempotency, and PostgreSQL persistence.
+
+Idempotency: `sourceEventId` is the replay key. Exact replay returns `200 OK`; conflicting replay returns `409 Conflict`.
+
+Request:
+
+```json
+{
+  "accountId": "acct_1",
+  "userId": "usr_1",
+  "workspaceId": "ws_1",
+  "computeId": "compute_1",
+  "resourceKind": "compute",
+  "quantity": 1,
+  "unit": "hour",
+  "unitPriceCents": 47,
+  "amountCents": 47,
+  "sourceEventId": "resource_usage:compute_1:billing_tick_1"
+}
+```
+
+Response:
+
+```json
+{
+  "created": true,
+  "log": {
+    "id": "usage_res_...",
+    "accountId": "acct_1",
+    "workspaceId": "ws_1",
+    "computeId": "compute_1",
+    "resourceKind": "compute",
+    "quantity": 1,
+    "unit": "hour",
+    "unitPriceCents": 47,
+    "amountCents": 47,
+    "currency": "CNY",
+    "sourceEventId": "resource_usage:compute_1:billing_tick_1"
+  }
+}
+```
+
+Persistence requirements:
+
+- `resource_usage_logs` stores account/user/workspace ids, compute/storage/attachment ids, resource kind, quantity, unit, unit price, amount, requested amount, currency, source event, payload, and timestamp.
+- `resource_usage_logs.source_event_id` is unique when present.
+- Resource usage records are evidence logs; settlement/debit writes remain in settlement and wallet transaction endpoints.
+
 ### `POST /api/v1/ledger/entries`
 
 Purpose: append low-level ledger entry.
@@ -490,6 +542,5 @@ Response:
 
 - Wallet read API.
 - Wallet transaction list API.
-- Resource usage log API/store wiring. Compute and storage resource usage log shapes are implemented locally with workspace/resource ids.
 - Reconciliation guard API.
 - Kubernetes evidence snapshot API. Read-only collector and PostgreSQL persistence primitives are implemented locally; external API wiring is still planned.

@@ -34,6 +34,7 @@ type MemoryStore struct {
 	transactionsBySource  map[string]wallet.Transaction
 	releaseHoldsBySource  map[string]ReleaseHoldResult
 	settlementsBySource   map[string]SettlementResult
+	resourceUsageBySource map[string]ResourceUsageResult
 	requestUsageBySource  map[string]RequestUsageResult
 	requestUsageByRequest map[string]RequestUsageResult
 	auditBySourceEvent    map[string]AuditEvent
@@ -49,6 +50,7 @@ func NewMemoryStore() *MemoryStore {
 		transactionsBySource:  map[string]wallet.Transaction{},
 		releaseHoldsBySource:  map[string]ReleaseHoldResult{},
 		settlementsBySource:   map[string]SettlementResult{},
+		resourceUsageBySource: map[string]ResourceUsageResult{},
 		requestUsageBySource:  map[string]RequestUsageResult{},
 		requestUsageByRequest: map[string]RequestUsageResult{},
 		auditBySourceEvent:    map[string]AuditEvent{},
@@ -563,6 +565,27 @@ func (s *MemoryStore) SettleWorkspaceUsage(_ context.Context, input SettlementIn
 		Created:      true,
 	}
 	s.settlementsBySource[input.SourceEventID] = result
+	return result, nil
+}
+
+func (s *MemoryStore) RecordResourceUsage(_ context.Context, input ResourceUsageInput) (ResourceUsageResult, error) {
+	if err := validateResourceUsageInput(input); err != nil {
+		return ResourceUsageResult{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if existing, ok := s.resourceUsageBySource[input.SourceEventID]; ok {
+		if !sameResourceUsageReplay(existing.Log, input) {
+			return ResourceUsageResult{}, ErrIdempotencyConflict
+		}
+		existing.Created = false
+		return existing, nil
+	}
+
+	log := usage.NewResourceUsageLog(toUsageResourceInput(input))
+	result := ResourceUsageResult{Log: log, Created: true}
+	s.resourceUsageBySource[input.SourceEventID] = result
 	return result, nil
 }
 

@@ -240,6 +240,28 @@ type SettlementIntent struct {
 	Reason        string               `json:"reason,omitempty"`
 }
 
+type ResourceUsageInput struct {
+	AccountID      string             `json:"accountId"`
+	UserID         string             `json:"userId,omitempty"`
+	WorkspaceID    string             `json:"workspaceId"`
+	ComputeID      string             `json:"computeId,omitempty"`
+	StorageID      string             `json:"storageId,omitempty"`
+	AttachmentID   string             `json:"attachmentId,omitempty"`
+	ResourceKind   usage.ResourceKind `json:"resourceKind"`
+	Quantity       int64              `json:"quantity"`
+	Unit           string             `json:"unit"`
+	UnitPriceCents int64              `json:"unitPriceCents"`
+	AmountCents    int64              `json:"amountCents"`
+	RequestedCents int64              `json:"requestedCents,omitempty"`
+	SourceEventID  string             `json:"sourceEventId"`
+	Metadata       map[string]any     `json:"metadata,omitempty"`
+}
+
+type ResourceUsageResult struct {
+	Log     usage.ResourceUsageLog `json:"log"`
+	Created bool                   `json:"created"`
+}
+
 type AuditEvent = auditlog.Event
 type AuditEventInput = auditlog.EventInput
 type AuditEventFilter = auditlog.EventFilter

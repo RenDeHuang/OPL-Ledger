@@ -455,6 +455,41 @@ func TestPostgresStoreSettleWorkspaceUsageWritesDebitsInOneTransaction(t *testin
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreRecordResourceUsageWritesPersistentLog(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+
+	mock.ExpectQuery(`SELECT payload\s+FROM resource_usage_logs\s+WHERE source_event_id = \$1`).
+		WithArgs("resource_usage:compute_1:billing_tick_1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}))
+	mock.ExpectExec(`INSERT INTO resource_usage_logs`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "compute_1", "", "", "compute", int64(1), "hour", int64(47), int64(47), int64(47), "CNY", "resource_usage:compute_1:billing_tick_1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	result, err := store.RecordResourceUsage(context.Background(), ResourceUsageInput{
+		AccountID:      "acct_1",
+		UserID:         "usr_1",
+		WorkspaceID:    "ws_1",
+		ComputeID:      "compute_1",
+		ResourceKind:   usage.ResourceKindCompute,
+		Quantity:       1,
+		Unit:           "hour",
+		UnitPriceCents: 47,
+		AmountCents:    47,
+		SourceEventID:  "resource_usage:compute_1:billing_tick_1",
+	})
+	if err != nil {
+		t.Fatalf("record resource usage: %v", err)
+	}
+	if !result.Created {
+		t.Fatalf("expected created result")
+	}
+	if result.Log.ID == "" || result.Log.ComputeID != "compute_1" || result.Log.AmountCents != 47 {
+		t.Fatalf("unexpected log: %+v", result.Log)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreAppendEvidenceRecordCreatesPersistentEvidenceRow(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

@@ -131,15 +131,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_request_idx
 CREATE TABLE IF NOT EXISTS resource_usage_logs (
   id TEXT PRIMARY KEY,
   account_id TEXT,
+  user_id TEXT,
   workspace_id TEXT,
   compute_id TEXT,
   storage_id TEXT,
+  attachment_id TEXT,
   resource_kind TEXT NOT NULL,
   quantity NUMERIC NOT NULL,
   unit TEXT NOT NULL,
+  unit_price_cents BIGINT NOT NULL DEFAULT 0,
+  amount_cents BIGINT NOT NULL DEFAULT 0,
+  requested_cents BIGINT NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  source_event_id TEXT,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_logs_source_event_idx
+  ON resource_usage_logs(source_event_id)
+  WHERE source_event_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
   id TEXT PRIMARY KEY,

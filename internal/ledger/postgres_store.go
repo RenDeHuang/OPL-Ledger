@@ -21,6 +21,7 @@ type Store interface {
 	CreateHold(context.Context, HoldInput) (HoldResult, error)
 	ReleaseHolds(context.Context, ReleaseHoldInput) (ReleaseHoldResult, error)
 	SettleWorkspaceUsage(context.Context, SettlementInput) (SettlementResult, error)
+	RecordResourceUsage(context.Context, ResourceUsageInput) (ResourceUsageResult, error)
 	RecordRequestUsage(context.Context, RequestUsageInput) (RequestUsageResult, error)
 	AppendAuditEvent(context.Context, AuditEventInput) (AuditEvent, error)
 	ListAuditEvents(context.Context, AuditEventFilter) ([]AuditEvent, error)
@@ -851,6 +852,57 @@ func (s *PostgresStore) SettleWorkspaceUsage(ctx context.Context, input Settleme
 	}, nil
 }
 
+func (s *PostgresStore) RecordResourceUsage(ctx context.Context, input ResourceUsageInput) (ResourceUsageResult, error) {
+	if err := validateResourceUsageInput(input); err != nil {
+		return ResourceUsageResult{}, err
+	}
+	existing, found, err := s.loadResourceUsageBySource(ctx, input.SourceEventID)
+	if err != nil {
+		return ResourceUsageResult{}, err
+	}
+	if found {
+		if !sameResourceUsageReplay(existing, input) {
+			return ResourceUsageResult{}, ErrIdempotencyConflict
+		}
+		return ResourceUsageResult{Log: existing, Created: false}, nil
+	}
+	log := usage.NewResourceUsageLog(toUsageResourceInput(input))
+	payload, err := json.Marshal(log)
+	if err != nil {
+		return ResourceUsageResult{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO resource_usage_logs (
+			id, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id, resource_kind,
+			quantity, unit, unit_price_cents, amount_cents, requested_cents, currency, source_event_id, payload, created_at
+		) VALUES (
+			$1, NULLIF($2, ''), NULLIF($3, ''), $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8,
+			$9, $10, $11, $12, $13, $14, $15, $16, $17
+		)`,
+		log.ID,
+		log.AccountID,
+		log.UserID,
+		log.WorkspaceID,
+		log.ComputeID,
+		log.StorageID,
+		log.AttachmentID,
+		string(log.ResourceKind),
+		log.Quantity,
+		log.Unit,
+		log.UnitPriceCents,
+		log.AmountCents,
+		log.RequestedCents,
+		log.Currency,
+		log.SourceEventID,
+		payload,
+		log.CreatedAt,
+	)
+	if err != nil {
+		return ResourceUsageResult{}, err
+	}
+	return ResourceUsageResult{Log: log, Created: true}, nil
+}
+
 func (s *PostgresStore) RecordRequestUsage(ctx context.Context, input RequestUsageInput) (RequestUsageResult, error) {
 	if input.WorkspaceID == "" {
 		return RequestUsageResult{}, errors.New("workspace_required")
@@ -1477,6 +1529,30 @@ func loadRequestUsageLogByID(ctx context.Context, tx *sql.Tx, id string) (Reques
 		return RequestUsageLog{}, err
 	}
 	return log, nil
+}
+
+func (s *PostgresStore) loadResourceUsageBySource(ctx context.Context, sourceEventID string) (usage.ResourceUsageLog, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT payload
+		FROM resource_usage_logs
+		WHERE source_event_id = $1
+		ORDER BY created_at, id
+		LIMIT 1`,
+		sourceEventID,
+	)
+	var payload []byte
+	err := row.Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return usage.ResourceUsageLog{}, false, nil
+	}
+	if err != nil {
+		return usage.ResourceUsageLog{}, false, err
+	}
+	var log usage.ResourceUsageLog
+	if err := json.Unmarshal(payload, &log); err != nil {
+		return usage.ResourceUsageLog{}, false, err
+	}
+	return log, true, nil
 }
 
 func loadLedgerEntryByID(ctx context.Context, tx *sql.Tx, id string) (Entry, error) {
