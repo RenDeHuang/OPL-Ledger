@@ -125,6 +125,7 @@ Implemented:
 - manual top-up API with wallet snapshot, credit ledger entry, wallet transaction, manual topup record, and audit event in one PostgreSQL transaction;
 - request usage API with quota check, dedup-first PostgreSQL transaction, available-balance debit, usage log, wallet transaction, and audit event;
 - 7-day compute/storage prepaid hold pricing calculation for Basic and Pro package inputs;
+- hourly compute/storage settlement calculation with available-balance-first debit, hold capture, idempotent replay input, and no-negative-balance behavior;
 - task receipt record/query;
 - reconciliation submit/latest;
 - Tencent reconciliation primitive;
@@ -135,8 +136,8 @@ Not complete:
 
 - wallet transaction listing and reconciliation queries;
 - persisted request quota management API; current request usage accepts Console-provided quota snapshots and records the incremented quota in the usage log payload;
-- compute/storage prepaid hold creation/capture/release;
-- settlement for compute/storage hourly billing;
+- compute/storage prepaid hold API/PostgreSQL transaction wiring;
+- settlement API/PostgreSQL transaction wiring for compute/storage hourly billing;
 - resource usage logs;
 - reconciliation guard API;
 - audit events API;

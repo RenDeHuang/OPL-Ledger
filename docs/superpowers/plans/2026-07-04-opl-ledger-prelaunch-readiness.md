@@ -170,9 +170,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/billing/settlement.go`
 - Modify: `internal/api/server.go`
 
-- [ ] Test hourly compute debit.
-- [ ] Test hourly storage debit.
-- [ ] Test repeated source event returns existing entries.
+- [x] Test hourly compute debit.
+- [x] Test hourly storage debit.
+- [x] Test repeated source event returns existing entries.
 
 ### Task 15: Enforce Debit Ordering
 
@@ -180,8 +180,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `internal/billing/settlement_test.go`
 - Modify: `internal/billing/settlement.go`
 
-- [ ] Test available balance is charged before frozen hold.
-- [ ] Test wallet balance never goes below zero.
+- [x] Test available balance is charged before frozen hold.
+- [x] Test wallet balance never goes below zero.
 
 ### Task 16: Implement Hold Exhaustion Results
 
