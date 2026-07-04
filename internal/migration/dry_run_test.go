@@ -190,10 +190,39 @@ func TestDryRunPreviewMapsRequestUsageAndDedup(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
 	writeJSONFile(t, inputDir, "users.json", []map[string]any{})
-	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{})
-	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{{
+		"id":                 "led_req_1",
+		"type":               "request_debit",
+		"accountId":          "acct_1",
+		"userId":             "usr_1",
+		"workspaceId":        "ws_1",
+		"sourceEventId":      "gateway_request:req_1",
+		"requestFingerprint": "fp_1",
+		"amountCents":        -25,
+		"currency":           "CNY",
+	}})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{{
+		"id":            "wtx_req_1",
+		"accountId":     "acct_1",
+		"userId":        "usr_1",
+		"workspaceId":   "ws_1",
+		"type":          "debit",
+		"amountCents":   -25,
+		"currency":      "CNY",
+		"sourceEventId": "gateway_request:req_1",
+		"ledgerEntryId": "led_req_1",
+		"usageLogId":    "usage_1",
+	}})
 	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
-	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{{
+		"id":            "aud_req_1",
+		"accountId":     "acct_1",
+		"workspaceId":   "ws_1",
+		"type":          "billing.request_usage_recorded",
+		"targetKind":    "request_usage",
+		"targetId":      "usage_1",
+		"sourceEventId": "gateway_request:req_1",
+	}})
 	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{{
 		"id":                   "usage_1",
 		"accountId":            "acct_1",
@@ -277,6 +306,62 @@ func TestDryRunPreviewFailsOnInconsistentRequestUsageDedup(t *testing.T) {
 		t.Fatalf("report status = %q", report.Status)
 	}
 	assertContains(t, report.BlockedReasons, "request_usage_dedup_inconsistent")
+}
+
+func TestDryRunPreviewFailsOnInconsistentRequestUsageAccountingChain(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageDedup.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "resourceUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{{
+		"id":                 "led_req_1",
+		"type":               "request_debit",
+		"accountId":          "acct_1",
+		"workspaceId":        "ws_1",
+		"sourceEventId":      "wrong_source",
+		"requestFingerprint": "wrong_fp",
+		"amountCents":        -24,
+	}})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{{
+		"id":            "wtx_req_1",
+		"accountId":     "acct_1",
+		"workspaceId":   "ws_1",
+		"type":          "debit",
+		"amountCents":   -24,
+		"sourceEventId": "wrong_source",
+		"ledgerEntryId": "led_req_1",
+		"usageLogId":    "usage_1",
+	}})
+	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{{
+		"id":                 "usage_1",
+		"accountId":          "acct_1",
+		"workspaceId":        "ws_1",
+		"requestId":          "req_1",
+		"sourceEventId":      "gateway_request:req_1",
+		"requestFingerprint": "fp_1",
+		"amountCents":        25,
+		"ledgerEntryId":      "led_req_1",
+	}})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{{
+		"id":            "aud_req_1",
+		"accountId":     "acct_1",
+		"workspaceId":   "ws_1",
+		"type":          "billing.request_usage_recorded",
+		"targetKind":    "request_usage",
+		"targetId":      "wrong_usage",
+		"sourceEventId": "wrong_source",
+	}})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "fail" {
+		t.Fatalf("report status = %q", report.Status)
+	}
+	assertContains(t, report.BlockedReasons, "request_usage_chain_inconsistent")
 }
 
 func TestDryRunPreviewMapsResourceUsageLogs(t *testing.T) {

@@ -96,6 +96,7 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 	r.validateWallets(walletPreview)
 	r.validateManualTopups(topupPreview, ledgerPreview, transactionPreview, auditPreview)
 	r.validateRequestUsageDedup(requestUsagePreview, requestUsageDedupPreview)
+	r.validateRequestUsageAccounting(requestUsagePreview, ledgerPreview, transactionPreview, auditPreview)
 	r.validateResourceUsage(resourceUsagePreview)
 
 	if err := r.writePreview("wallets.preview.json", walletPreview); err != nil {
@@ -403,6 +404,84 @@ func (r *dryRun) requireRequestUsageEqual(message string, left map[string]any, l
 func (r *dryRun) requestUsageDedupMismatch(message string) {
 	r.mismatch(message)
 	r.block("request_usage_dedup_inconsistent")
+}
+
+func (r *dryRun) validateRequestUsageAccounting(logs []map[string]any, ledgerEntries []map[string]any, walletTransactions []map[string]any, auditEvents []map[string]any) {
+	ledgerByID := recordByID(ledgerEntries)
+	auditByTargetID := recordByTargetID(auditEvents, "request_usage")
+	transactionsByUsageLogID := recordsByField(walletTransactions, "usage_log_id")
+	for _, log := range logs {
+		ledgerID := fmt.Sprint(log["ledger_entry_id"])
+		if ledgerID != "" {
+			entry, ok := ledgerByID[ledgerID]
+			if !ok {
+				r.requestUsageChainMismatch("request usage references missing ledger entry: " + ledgerID)
+			} else {
+				r.validateRequestUsageLedgerEntry(log, entry)
+			}
+		}
+		transactions := transactionsByUsageLogID[fmt.Sprint(log["id"])]
+		for _, transaction := range transactions {
+			r.validateRequestUsageWalletTransaction(log, transaction)
+		}
+		if int64Value(log["amount_cents"]) > 0 && len(transactions) == 0 {
+			r.requestUsageChainMismatch("charged request usage missing wallet transaction: " + fmt.Sprint(log["id"]))
+		}
+		audit, ok := auditByTargetID[fmt.Sprint(log["id"])]
+		if ok {
+			r.validateRequestUsageAuditEvent(log, audit)
+		} else {
+			r.requestUsageChainMismatch("request usage missing audit event: " + fmt.Sprint(log["id"]))
+		}
+	}
+}
+
+func (r *dryRun) validateRequestUsageLedgerEntry(log map[string]any, entry map[string]any) {
+	if fmt.Sprint(entry["event_type"]) != "request_debit" {
+		r.requestUsageChainMismatch("request usage ledger entry is not request_debit: " + fmt.Sprint(log["id"]))
+	}
+	r.requireRequestUsageChainEqual("request usage ledger account mismatch", log, "account_id", entry, "account_id")
+	r.requireRequestUsageChainEqual("request usage ledger workspace mismatch", log, "workspace_id", entry, "workspace_id")
+	r.requireRequestUsageChainEqual("request usage ledger source mismatch", log, "source_event_id", entry, "source_event_id")
+	r.requireRequestUsageChainEqual("request usage ledger fingerprint mismatch", log, "request_fingerprint", entry, "request_fingerprint")
+	if int64Value(entry["amount_cents"]) != -int64Value(log["amount_cents"]) {
+		r.requestUsageChainMismatch(fmt.Sprintf("request usage ledger amount mismatch: log=%v entry=%v", log["amount_cents"], entry["amount_cents"]))
+	}
+}
+
+func (r *dryRun) validateRequestUsageWalletTransaction(log map[string]any, transaction map[string]any) {
+	if fmt.Sprint(transaction["transaction_type"]) != "debit" {
+		r.requestUsageChainMismatch("request usage wallet transaction is not debit: " + fmt.Sprint(log["id"]))
+	}
+	r.requireRequestUsageChainEqual("request usage wallet transaction account mismatch", log, "account_id", transaction, "account_id")
+	r.requireRequestUsageChainEqual("request usage wallet transaction workspace mismatch", log, "workspace_id", transaction, "workspace_id")
+	r.requireRequestUsageChainEqual("request usage wallet transaction source mismatch", log, "source_event_id", transaction, "source_event_id")
+	r.requireRequestUsageChainEqual("request usage wallet transaction ledger mismatch", log, "ledger_entry_id", transaction, "ledger_entry_id")
+	if int64Value(transaction["amount_cents"]) != -int64Value(log["amount_cents"]) {
+		r.requestUsageChainMismatch(fmt.Sprintf("request usage wallet transaction amount mismatch: log=%v transaction=%v", log["amount_cents"], transaction["amount_cents"]))
+	}
+}
+
+func (r *dryRun) validateRequestUsageAuditEvent(log map[string]any, audit map[string]any) {
+	if fmt.Sprint(audit["action"]) != "billing.request_usage_recorded" {
+		r.requestUsageChainMismatch("request usage audit action mismatch: " + fmt.Sprint(log["id"]))
+	}
+	r.requireRequestUsageChainEqual("request usage audit account mismatch", log, "account_id", audit, "account_id")
+	r.requireRequestUsageChainEqual("request usage audit workspace mismatch", log, "workspace_id", audit, "workspace_id")
+	r.requireRequestUsageChainEqual("request usage audit target mismatch", log, "id", audit, "target_id")
+	r.requireRequestUsageChainEqual("request usage audit source mismatch", log, "source_event_id", audit, "source_event_id")
+}
+
+func (r *dryRun) requireRequestUsageChainEqual(message string, left map[string]any, leftKey string, right map[string]any, rightKey string) {
+	if fmt.Sprint(left[leftKey]) == fmt.Sprint(right[rightKey]) {
+		return
+	}
+	r.requestUsageChainMismatch(fmt.Sprintf("%s: %s=%v %s=%v", message, leftKey, left[leftKey], rightKey, right[rightKey]))
+}
+
+func (r *dryRun) requestUsageChainMismatch(message string) {
+	r.mismatch(message)
+	r.block("request_usage_chain_inconsistent")
 }
 
 func (r *dryRun) validateResourceUsage(logs []map[string]any) {
@@ -748,6 +827,32 @@ func recordByID(records []map[string]any) map[string]map[string]any {
 		if id != "" {
 			out[id] = record
 		}
+	}
+	return out
+}
+
+func recordByTargetID(records []map[string]any, targetKind string) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	for _, record := range records {
+		if fmt.Sprint(record["target_kind"]) != targetKind {
+			continue
+		}
+		targetID := stringValue(record, "target_id")
+		if targetID != "" {
+			out[targetID] = record
+		}
+	}
+	return out
+}
+
+func recordsByField(records []map[string]any, field string) map[string][]map[string]any {
+	out := map[string][]map[string]any{}
+	for _, record := range records {
+		value := fmt.Sprint(record[field])
+		if value == "" {
+			continue
+		}
+		out[value] = append(out[value], record)
 	}
 	return out
 }

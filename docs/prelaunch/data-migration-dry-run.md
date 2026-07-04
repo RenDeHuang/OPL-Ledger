@@ -250,6 +250,9 @@ Validation:
 - dedup rows resolve by `workspaceId + sourceEventId` and `workspaceId + requestId`.
 - every `request_usage_dedup.usage_log_id` resolves to a preview `request_usage_logs` row.
 - linked dedup and log rows agree on workspace id, request id, source event id, and request fingerprint.
+- charged request usage resolves to a `request_debit` ledger entry with matching account, workspace, source event, request fingerprint, and negative charged amount.
+- charged request usage resolves to a `debit` wallet transaction with matching usage log id, ledger entry id, account, workspace, source event, and negative charged amount.
+- request usage resolves to a `billing.request_usage_recorded` audit event targeting the usage log id.
 - quota rejections do not create wallet, ledger, usage, transaction, or audit rows.
 
 ## Resource Usage
