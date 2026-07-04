@@ -23,6 +23,7 @@ type Store interface {
 	ListAuditEvents(context.Context, AuditEventFilter) ([]AuditEvent, error)
 	AppendEvidenceRecord(context.Context, EvidenceRecordInput) (EvidenceRecord, error)
 	ListEvidenceRecords(context.Context, EvidenceRecordFilter) ([]EvidenceRecord, error)
+	AppendKubernetesEvidenceSnapshot(context.Context, KubernetesEvidenceSnapshot) (KubernetesEvidenceSnapshot, error)
 	ListEntries(context.Context, EntryFilter) ([]Entry, error)
 	Summary(context.Context, EntryFilter) (Summary, error)
 	AppendTaskReceipt(context.Context, TaskReceiptInput) (TaskReceipt, error)
@@ -855,6 +856,39 @@ func (s *PostgresStore) ListEvidenceRecords(ctx context.Context, filter Evidence
 	}
 	defer rows.Close()
 	return scanEvidenceRecords(rows)
+}
+
+func (s *PostgresStore) AppendKubernetesEvidenceSnapshot(ctx context.Context, snapshot KubernetesEvidenceSnapshot) (KubernetesEvidenceSnapshot, error) {
+	if snapshot.CollectedAt.IsZero() {
+		snapshot.CollectedAt = nowUTC()
+	}
+	redactedObject, err := json.Marshal(snapshot.RedactedObject)
+	if err != nil {
+		return KubernetesEvidenceSnapshot{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO kubernetes_evidence_snapshots (
+			id, cluster_id, namespace, object_kind, object_name, workspace_id, resource_version,
+			observed_generation, readiness_status, redacted_object, collected_at
+		) VALUES (
+			$1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11
+		)`,
+		randomScopedID("kes"),
+		snapshot.ClusterID,
+		snapshot.Namespace,
+		snapshot.ObjectKind,
+		snapshot.ObjectName,
+		snapshot.WorkspaceID,
+		snapshot.ResourceVersion,
+		snapshot.ObservedGeneration,
+		snapshot.ReadinessStatus,
+		redactedObject,
+		snapshot.CollectedAt,
+	)
+	if err != nil {
+		return KubernetesEvidenceSnapshot{}, err
+	}
+	return snapshot, nil
 }
 
 func (s *PostgresStore) entriesForIdempotencyKeys(ctx context.Context, tx *sql.Tx, input AppendEntryInput) ([]Entry, error) {

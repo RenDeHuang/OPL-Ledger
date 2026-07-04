@@ -11,6 +11,7 @@ import (
 
 	auditlog "github.com/RenDeHuang/OPL-Ledger/internal/audit"
 	evidencelog "github.com/RenDeHuang/OPL-Ledger/internal/evidence"
+	k8sevidence "github.com/RenDeHuang/OPL-Ledger/internal/k8s"
 	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
@@ -24,6 +25,7 @@ type MemoryStore struct {
 	requestUsageLogs      []RequestUsageLog
 	auditEvents           []AuditEvent
 	evidenceRecords       []EvidenceRecord
+	kubernetesSnapshots   []KubernetesEvidenceSnapshot
 	taskReceipts          []TaskReceipt
 	reconciliationReports []ReconciliationReport
 	bySourceEvent         map[string]Entry
@@ -482,6 +484,16 @@ func (s *MemoryStore) ListEvidenceRecords(_ context.Context, filter EvidenceReco
 	return out, nil
 }
 
+func (s *MemoryStore) AppendKubernetesEvidenceSnapshot(_ context.Context, snapshot KubernetesEvidenceSnapshot) (KubernetesEvidenceSnapshot, error) {
+	if snapshot.CollectedAt.IsZero() {
+		snapshot.CollectedAt = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.kubernetesSnapshots = append(s.kubernetesSnapshots, cloneKubernetesEvidenceSnapshot(snapshot))
+	return snapshot, nil
+}
+
 func sameReplayPayload(entry Entry, input AppendEntryInput) bool {
 	return entry.EventType == input.EventType &&
 		entry.AccountID == input.AccountID &&
@@ -679,6 +691,13 @@ func cloneAuditEvent(event AuditEvent) AuditEvent {
 	event.Payload = cloneMap(event.Payload)
 	return event
 }
+
+func cloneKubernetesEvidenceSnapshot(snapshot KubernetesEvidenceSnapshot) KubernetesEvidenceSnapshot {
+	snapshot.RedactedObject = cloneMap(snapshot.RedactedObject)
+	return snapshot
+}
+
+var _ k8sevidence.SnapshotStore = (*MemoryStore)(nil)
 
 func newTaskReceipt(input TaskReceiptInput, createdAt time.Time) (TaskReceipt, error) {
 	if input.AccountID == "" {

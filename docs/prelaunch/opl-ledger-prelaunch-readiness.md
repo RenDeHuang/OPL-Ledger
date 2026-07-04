@@ -135,7 +135,7 @@ Implemented:
 - reconciliation submit/latest;
 - reconciliation guard API for missing, stale, failed, and passing recent reports;
 - Tencent reconciliation primitive with raw bill row normalization, workspace tag extraction, missing workspace fail-closed, and mixed-currency fail-closed behavior;
-- read-only Deployment evidence collector primitive;
+- read-only Deployment evidence collector primitive with PostgreSQL persistence for redacted Kubernetes evidence snapshots;
 - React + TypeScript operator UI baseline.
 
 Not complete:
@@ -145,7 +145,7 @@ Not complete:
 - compute/storage prepaid hold create/release API/PostgreSQL transaction wiring;
 - settlement API/PostgreSQL transaction wiring for compute/storage hourly billing;
 - resource usage log API/PostgreSQL transaction wiring;
-- persisted Kubernetes evidence snapshots;
+- external Kubernetes evidence snapshot API;
 - service-to-service auth;
 - Console/Fabric integration;
 - data migration from current Console state.

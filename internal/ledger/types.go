@@ -6,6 +6,7 @@ import (
 
 	auditlog "github.com/RenDeHuang/OPL-Ledger/internal/audit"
 	evidencelog "github.com/RenDeHuang/OPL-Ledger/internal/evidence"
+	k8sevidence "github.com/RenDeHuang/OPL-Ledger/internal/k8s"
 	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
@@ -170,6 +171,8 @@ type AuditEventFilter = auditlog.EventFilter
 type EvidenceRecord = evidencelog.Record
 type EvidenceRecordInput = evidencelog.RecordInput
 type EvidenceRecordFilter = evidencelog.RecordFilter
+
+type KubernetesEvidenceSnapshot = k8sevidence.Snapshot
 
 type RequestUsageInput struct {
 	AccountID          string              `json:"accountId,omitempty"`

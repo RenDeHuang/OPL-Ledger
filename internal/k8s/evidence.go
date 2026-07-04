@@ -25,8 +25,20 @@ type Collector struct {
 	client kubernetes.Interface
 }
 
+type SnapshotStore interface {
+	AppendKubernetesEvidenceSnapshot(ctx context.Context, snapshot Snapshot) (Snapshot, error)
+}
+
 func NewCollector(client kubernetes.Interface) *Collector {
 	return &Collector{client: client}
+}
+
+func (c *Collector) CollectAndPersistDeployment(ctx context.Context, store SnapshotStore, clusterID string, namespace string, name string) (Snapshot, error) {
+	snapshot, err := c.CollectDeployment(ctx, clusterID, namespace, name)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return store.AppendKubernetesEvidenceSnapshot(ctx, snapshot)
 }
 
 func (c *Collector) CollectDeployment(ctx context.Context, clusterID string, namespace string, name string) (Snapshot, error) {

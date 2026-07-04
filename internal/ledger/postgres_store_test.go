@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -374,6 +375,41 @@ func TestPostgresStoreListEvidenceRecordsFiltersByAccountWorkspaceTypeAndSourceE
 	}
 	if len(records) != 1 || records[0].ID != "evd_1" {
 		t.Fatalf("records = %+v", records)
+	}
+	assertSQLExpectations(t, mock)
+}
+
+func TestPostgresStoreAppendKubernetesEvidenceSnapshotStoresRedactedObject(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	collectedAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec(`INSERT INTO kubernetes_evidence_snapshots`).
+		WithArgs(sqlmock.AnyArg(), "cluster_1", "opl-cloud", "Deployment", "opl-ws-1", "ws_1", "42", int64(7), "ready", sqlmock.AnyArg(), collectedAt).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	snapshot, err := store.AppendKubernetesEvidenceSnapshot(context.Background(), KubernetesEvidenceSnapshot{
+		ClusterID:          "cluster_1",
+		Namespace:          "opl-cloud",
+		ObjectKind:         "Deployment",
+		ObjectName:         "opl-ws-1",
+		WorkspaceID:        "ws_1",
+		ResourceVersion:    "42",
+		ObservedGeneration: 7,
+		ReadinessStatus:    "ready",
+		CollectedAt:        collectedAt,
+		RedactedObject: map[string]any{
+			"kind":          "Deployment",
+			"name":          "opl-ws-1",
+			"readyReplicas": int32(1),
+		},
+	})
+	if err != nil {
+		t.Fatalf("append kubernetes evidence snapshot: %v", err)
+	}
+	payload := string(mustJSON(t, snapshot.RedactedObject))
+	if strings.Contains(payload, "secret-value") {
+		t.Fatalf("redacted object leaked secret: %s", payload)
 	}
 	assertSQLExpectations(t, mock)
 }

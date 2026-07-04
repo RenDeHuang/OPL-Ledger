@@ -278,8 +278,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `internal/k8s/evidence.go`
 - Modify: `internal/ledger/postgres_store.go`
 
-- [ ] Test Deployment snapshot stores redacted object.
-- [ ] Test secret values are never persisted.
+- [x] Test Deployment snapshot stores redacted object.
+- [x] Test secret values are never persisted.
 
 ### Task 26: Add Service Authentication
 

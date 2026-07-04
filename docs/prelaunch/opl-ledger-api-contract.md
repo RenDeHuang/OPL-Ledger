@@ -335,4 +335,4 @@ Response:
 - Hourly settlement API. Core compute/storage debit calculation, available-balance-first charging, hold capture, hold-exhaustion intents, and no-negative-balance rules are implemented locally; API/PostgreSQL transaction wiring is still planned.
 - Resource usage log API/store wiring. Compute and storage resource usage log shapes are implemented locally with workspace/resource ids.
 - Reconciliation guard API.
-- Kubernetes evidence snapshot API.
+- Kubernetes evidence snapshot API. Read-only collector and PostgreSQL persistence primitives are implemented locally; external API wiring is still planned.
