@@ -246,8 +246,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/ownership/ownership_test.go`
 - Create: `internal/ownership/ownership.go`
 
-- [ ] Define interface for Console-provided workspace ownership.
-- [ ] Test task receipt rejects workspace owned by another account.
+- [x] Define interface for Console-provided workspace ownership.
+- [x] Test task receipt rejects workspace owned by another account.
 
 ### Task 23: Complete Tencent Bill Normalization
 

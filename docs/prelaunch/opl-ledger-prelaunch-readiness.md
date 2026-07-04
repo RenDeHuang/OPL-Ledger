@@ -131,6 +131,7 @@ Implemented:
 - audit events append/list API backed by PostgreSQL and in-memory stores;
 - evidence records append/list API backed by PostgreSQL and in-memory stores; evidence records stay out of billing ledger entries;
 - task receipt record/query with PostgreSQL `accountId/workspaceId/taskId/sourceEventId` idempotency;
+- Console-provided workspace ownership validation hook for task receipt writes;
 - reconciliation submit/latest;
 - Tencent reconciliation primitive;
 - read-only Deployment evidence collector primitive;

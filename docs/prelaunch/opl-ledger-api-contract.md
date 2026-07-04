@@ -95,6 +95,8 @@ Status: implemented with PostgreSQL idempotency for `accountId + workspaceId + t
 
 Idempotency: when `sourceEventId` is supplied, exact replay returns the existing receipt. Replay with the same idempotency tuple and different payload returns `409 Conflict`.
 
+Ownership: when the API server is configured with the Console-provided workspace ownership resolver, `workspaceId` must belong to `accountId`. A missing workspace or mismatched owner returns `404` with `workspace_not_found`, matching the `medopl-3` no-leak behavior. If no resolver is configured, pre-cutover local/dev paths skip this validation.
+
 ### `GET /api/v1/ledger/task-receipts`
 
 Purpose: list task receipts by account/workspace/task.

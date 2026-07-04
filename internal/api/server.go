@@ -10,17 +10,23 @@ import (
 	"time"
 
 	"github.com/RenDeHuang/OPL-Ledger/internal/ledger"
+	"github.com/RenDeHuang/OPL-Ledger/internal/ownership"
 	"github.com/RenDeHuang/OPL-Ledger/internal/reconciliation"
 	"github.com/RenDeHuang/OPL-Ledger/internal/version"
 )
 
 type Server struct {
-	store ledger.Store
-	mux   *http.ServeMux
+	store              ledger.Store
+	workspaceOwnership ownership.WorkspaceResolver
+	mux                *http.ServeMux
 }
 
 func NewServer(store ledger.Store) http.Handler {
-	s := &Server{store: store, mux: http.NewServeMux()}
+	return NewServerWithOwnership(store, nil)
+}
+
+func NewServerWithOwnership(store ledger.Store, workspaceOwnership ownership.WorkspaceResolver) http.Handler {
+	s := &Server{store: store, workspaceOwnership: workspaceOwnership, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -154,9 +160,13 @@ func (s *Server) recordTaskReceipt(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
 		return
 	}
+	if err := ownership.ValidateWorkspaceAccount(r.Context(), s.workspaceOwnership, input.AccountID, input.WorkspaceID); err != nil {
+		writeOwnershipError(w, err)
+		return
+	}
 	receipt, err := s.store.AppendTaskReceipt(r.Context(), input)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAppendError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, receipt)
@@ -304,6 +314,14 @@ func writeAppendError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
 	if errors.Is(err, ledger.ErrIdempotencyConflict) {
 		status = http.StatusConflict
+	}
+	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func writeOwnershipError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	if errors.Is(err, ownership.ErrWorkspaceNotFound) {
+		status = http.StatusNotFound
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
