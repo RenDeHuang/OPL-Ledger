@@ -160,8 +160,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/billing/holds_test.go`
 - Create: `internal/billing/holds.go`
 
-- [ ] Test compute hold and storage hold require sufficient available balance.
-- [ ] Test hold rows write ledger entries and wallet transactions.
+- [x] Test compute hold and storage hold require sufficient available balance.
+- [x] Test hold rows write ledger entries and wallet transactions.
 
 ### Task 14: Implement Settlement
 
