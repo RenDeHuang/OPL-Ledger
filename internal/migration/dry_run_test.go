@@ -108,6 +108,84 @@ func TestDryRunPreviewMapsWalletTopUpAccounting(t *testing.T) {
 	}
 }
 
+func TestDryRunPreviewReadsSingleOPLCloudStateFile(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "opl-cloud-state.json", map[string]any{
+		"users": map[string]any{
+			"usr_1": map[string]any{
+				"id":             "usr_1",
+				"accountId":      "acct_1",
+				"balance":        200,
+				"frozen":         0,
+				"holds":          map[string]any{},
+				"totalRecharged": 200,
+			},
+		},
+		"billingLedger": []map[string]any{{
+			"id":            "led_1",
+			"type":          "credit",
+			"accountId":     "acct_1",
+			"userId":        "usr_1",
+			"workspaceId":   "account",
+			"sourceEventId": "console_manual_topup_1",
+			"amount":        200,
+			"currency":      "CNY",
+		}},
+		"walletTransactions": []map[string]any{{
+			"id":            "wtx_1",
+			"accountId":     "acct_1",
+			"userId":        "usr_1",
+			"workspaceId":   "account",
+			"type":          "credit",
+			"amount":        200,
+			"currency":      "CNY",
+			"sourceEventId": "console_manual_topup_1",
+			"ledgerEntryId": "led_1",
+			"balanceBefore": 0,
+			"balanceAfter":  200,
+			"frozenBefore":  0,
+			"frozenAfter":   0,
+		}},
+		"manualTopups": []map[string]any{{
+			"id":                  "topup_1",
+			"operatorUserId":      "usr_admin",
+			"operatorAccountId":   "acct_admin",
+			"targetUserId":        "usr_1",
+			"targetAccountId":     "acct_1",
+			"sourceEventId":       "console_manual_topup_1",
+			"reason":              "single state import",
+			"amount":              200,
+			"currency":            "CNY",
+			"status":              "completed",
+			"balanceBefore":       0,
+			"balanceAfter":        200,
+			"ledgerEntryId":       "led_1",
+			"walletTransactionId": "wtx_1",
+			"auditEventId":        "aud_1",
+		}},
+		"audit": []map[string]any{{
+			"id":            "aud_1",
+			"accountId":     "acct_1",
+			"type":          "account.credit_granted",
+			"targetKind":    "manual_topup",
+			"targetId":      "topup_1",
+			"sourceEventId": "topup_1",
+		}},
+	})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "pass" {
+		t.Fatalf("report status = %q mismatches=%+v blocked=%+v", report.Status, report.Mismatches, report.BlockedReasons)
+	}
+	if report.RowCounts["wallets.preview.json"] != 1 || report.RowCounts["ledger_entries.preview.json"] != 1 || report.RowCounts["wallet_transactions.preview.json"] != 1 || report.RowCounts["manual_topups.preview.json"] != 1 || report.RowCounts["audit_events.preview.json"] != 1 {
+		t.Fatalf("row counts = %+v", report.RowCounts)
+	}
+}
+
 func TestDryRunPreviewFailsOnDuplicateTopUpSourceAndMissingReferences(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

@@ -14,7 +14,15 @@ script and must not write production data.
 
 ## Required Inputs
 
-Export these local JSON files from `medopl-3` state:
+Export these local JSON files from `medopl-3` state, or copy the local single
+state snapshot into the dry-run input directory as `opl-cloud-state.json`.
+
+Supported single-file source:
+
+- `/home/dev/medopl-3/.runtime/opl-cloud-state.json` copied to
+  `.local/migration-dry-run/input/opl-cloud-state.json`
+
+Supported split-file source:
 
 - `users.json`
 - `accounts.json`
@@ -61,6 +69,12 @@ go run ./cmd/opl-ledger-migration-dry-run \
 The command reads only local JSON files, writes only local preview/report files,
 and does not connect to production Console, Ledger, Tencent Cloud, Kubernetes,
 or PostgreSQL.
+
+The input directory may contain either split export files such as `users.json`
+and `billingLedger.json`, or a copied `opl-cloud-state.json` with matching
+top-level keys such as `users`, `billingLedger`, `walletTransactions`,
+`manualTopups`, and `audit`. When both exist, split files take precedence for
+that dataset.
 
 Current executable coverage:
 

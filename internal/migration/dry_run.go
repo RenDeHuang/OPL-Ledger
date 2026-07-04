@@ -26,6 +26,7 @@ type dryRun struct {
 	inputDir  string
 	outputDir string
 	report    Report
+	state     map[string]any
 }
 
 func RunDryRun(inputDir string, outputDir string) (Report, error) {
@@ -51,23 +52,23 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 		return Report{}, err
 	}
 
-	users, err := readRecords(filepath.Join(inputDir, "users.json"))
+	users, err := r.readRecords("users.json", "users")
 	if err != nil {
 		return Report{}, err
 	}
-	ledgerEntries, err := readRecords(filepath.Join(inputDir, "billingLedger.json"))
+	ledgerEntries, err := r.readRecords("billingLedger.json", "billingLedger")
 	if err != nil {
 		return Report{}, err
 	}
-	walletTransactions, err := readRecords(filepath.Join(inputDir, "walletTransactions.json"))
+	walletTransactions, err := r.readRecords("walletTransactions.json", "walletTransactions")
 	if err != nil {
 		return Report{}, err
 	}
-	manualTopups, err := readRecords(filepath.Join(inputDir, "manualTopups.json"))
+	manualTopups, err := r.readRecords("manualTopups.json", "manualTopups")
 	if err != nil {
 		return Report{}, err
 	}
-	auditEvents, err := readRecords(filepath.Join(inputDir, "audit.json"))
+	auditEvents, err := r.readRecords("audit.json", "audit")
 	if err != nil {
 		return Report{}, err
 	}
@@ -436,6 +437,51 @@ func readRecords(path string) ([]map[string]any, error) {
 		return nil, err
 	}
 	return normalizeRecords(raw), nil
+}
+
+func (r *dryRun) readRecords(fileName string, stateKey string) ([]map[string]any, error) {
+	path := filepath.Join(r.inputDir, fileName)
+	records, err := readRecords(path)
+	if err == nil {
+		if len(records) > 0 || fileExists(path) {
+			return records, nil
+		}
+	} else {
+		return nil, err
+	}
+	state, err := r.readState()
+	if err != nil {
+		return nil, err
+	}
+	return normalizeRecords(state[stateKey]), nil
+}
+
+func (r *dryRun) readState() (map[string]any, error) {
+	if r.state != nil {
+		return r.state, nil
+	}
+	path := filepath.Join(r.inputDir, "opl-cloud-state.json")
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			r.state = map[string]any{}
+			return r.state, nil
+		}
+		return nil, err
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.UseNumber()
+	var raw map[string]any
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, err
+	}
+	r.state = raw
+	return r.state, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func normalizeRecords(raw any) []map[string]any {
