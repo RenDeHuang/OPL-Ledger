@@ -198,9 +198,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/billing/hold_release_test.go`
 - Modify: `internal/billing/holds.go`
 
-- [ ] Test stop compute releases compute hold only.
-- [ ] Test destroy storage releases compute and storage holds when applicable.
-- [ ] Test create failure releases holds.
+- [x] Test stop compute releases compute hold only.
+- [x] Test destroy storage releases compute and storage holds when applicable.
+- [x] Test create failure releases holds.
 
 ### Task 18: Implement Resource Usage Logs
 
