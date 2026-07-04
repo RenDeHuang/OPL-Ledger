@@ -70,6 +70,99 @@ Persistence requirements:
 - `audit_events` records `account.credit_granted`.
 - PostgreSQL path performs these writes in one SQL transaction.
 
+### `POST /api/v1/billing/holds`
+
+Purpose: create a prepaid compute or storage hold before opening or resuming a paid resource.
+
+Status: implemented for compute/storage wallet hold creation, idempotent replay, wallet frozen/available updates, ledger entry, wallet transaction, and PostgreSQL transaction wiring.
+
+Idempotency: `sourceEventId` is the replay key. Exact replay returns the existing hold result with `200 OK`; conflicting replay returns `409 Conflict`.
+
+Request:
+
+```json
+{
+  "accountId": "acct_1",
+  "userId": "usr_1",
+  "workspaceId": "ws_1",
+  "holdType": "compute",
+  "amountCents": 600,
+  "sourceEventId": "compute_resource:compute_1:created",
+  "resourceId": "compute_1",
+  "packageId": "basic"
+}
+```
+
+Response:
+
+```json
+{
+  "created": true,
+  "wallet": {
+    "accountId": "acct_1",
+    "balanceCents": 1000,
+    "frozenCents": 600,
+    "availableCents": 400,
+    "holds": {"compute": 600}
+  },
+  "entry": {},
+  "transaction": {}
+}
+```
+
+Persistence requirements:
+
+- `wallets.holds` and `wallets.frozen_cents` are updated without changing `balance_cents`.
+- `ledger_entries` receives `compute_hold` or `storage_hold`.
+- `wallet_transactions` receives a `hold` transaction with before/after frozen and available balances.
+- Insufficient available balance returns `400` and writes no ledger, wallet transaction, or wallet mutation.
+- PostgreSQL path performs these writes in one SQL transaction.
+
+### `POST /api/v1/billing/holds/release`
+
+Purpose: release prepaid compute/storage holds when a resource is stopped, destroyed, or creation fails.
+
+Status: implemented for compute/storage hold release, idempotent replay, wallet frozen/available updates, ledger entries, wallet transactions, and PostgreSQL transaction wiring.
+
+Idempotency: `sourceEventId` is the replay key for single-hold releases. For multi-hold releases, stored ledger source ids are suffixed with `:<holdType>` to avoid conflicting with the `ledger_entries.source_event_id` uniqueness constraint.
+
+Request:
+
+```json
+{
+  "accountId": "acct_1",
+  "workspaceId": "ws_1",
+  "holdTypes": ["compute"],
+  "sourceEventId": "compute_resource:compute_1:stopped",
+  "computeId": "compute_1",
+  "reason": "stop_compute"
+}
+```
+
+Response:
+
+```json
+{
+  "created": true,
+  "wallet": {
+    "accountId": "acct_1",
+    "balanceCents": 1000,
+    "frozenCents": 0,
+    "availableCents": 1000,
+    "holds": {"compute": 0}
+  },
+  "entries": [{}],
+  "transactions": [{}]
+}
+```
+
+Persistence requirements:
+
+- `wallets.holds` and `wallets.frozen_cents` are reduced without changing `balance_cents`.
+- Released hold amount writes `compute_hold_released` or `storage_hold_released` ledger entries with negative amount.
+- Released hold amount writes `hold_release` wallet transactions with before/after frozen and available balances.
+- PostgreSQL path performs these writes in one SQL transaction.
+
 ### `POST /api/v1/ledger/entries`
 
 Purpose: append low-level ledger entry.
@@ -338,7 +431,6 @@ Response:
 
 - Wallet read API.
 - Wallet transaction list API.
-- Compute/storage hold create/release APIs. Pricing, hold creation, and hold release business rules are implemented locally; API/PostgreSQL transaction wiring is still planned.
 - Hourly settlement API. Core compute/storage debit calculation, available-balance-first charging, hold capture, hold-exhaustion intents, and no-negative-balance rules are implemented locally; API/PostgreSQL transaction wiring is still planned.
 - Resource usage log API/store wiring. Compute and storage resource usage log shapes are implemented locally with workspace/resource ids.
 - Reconciliation guard API.

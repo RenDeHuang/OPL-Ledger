@@ -18,6 +18,8 @@ import (
 type Store interface {
 	AppendEntry(context.Context, AppendEntryInput) (AppendEntryResult, error)
 	ManualTopUp(context.Context, ManualTopUpInput) (ManualTopUpResult, error)
+	CreateHold(context.Context, HoldInput) (HoldResult, error)
+	ReleaseHolds(context.Context, ReleaseHoldInput) (ReleaseHoldResult, error)
 	RecordRequestUsage(context.Context, RequestUsageInput) (RequestUsageResult, error)
 	AppendAuditEvent(context.Context, AuditEventInput) (AuditEvent, error)
 	ListAuditEvents(context.Context, AuditEventFilter) ([]AuditEvent, error)
@@ -424,6 +426,275 @@ func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput)
 		TopUp:       topup,
 		AuditEvent:  audit,
 		Created:     true,
+	}, nil
+}
+
+func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldResult, error) {
+	if err := validateHoldInput(input); err != nil {
+		return HoldResult{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	existing, err := s.entriesForIdempotencyKeys(ctx, tx, AppendEntryInput{SourceEventID: input.SourceEventID})
+	if err != nil {
+		return HoldResult{}, err
+	}
+	if len(existing) > 1 {
+		return HoldResult{}, ErrIdempotencyConflict
+	}
+	if len(existing) == 1 {
+		entry := existing[0]
+		replay := holdAppendInput(input)
+		if replay.UserID == "" {
+			replay.UserID = entry.UserID
+		}
+		if !sameReplayPayload(entry, replay) {
+			return HoldResult{}, ErrIdempotencyConflict
+		}
+		w, _, err := s.walletForUpdate(ctx, tx, input.AccountID)
+		if err != nil {
+			return HoldResult{}, err
+		}
+		transaction, err := loadWalletTransactionBySource(ctx, tx, input.SourceEventID)
+		if err != nil {
+			return HoldResult{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return HoldResult{}, err
+		}
+		committed = true
+		return HoldResult{
+			Wallet:      w.Snapshot(),
+			Entry:       entry,
+			Transaction: transaction,
+			Created:     false,
+		}, nil
+	}
+
+	w, found, err := s.walletForUpdate(ctx, tx, input.AccountID)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	if !found {
+		w = wallet.Wallet{
+			UserID:    input.UserID,
+			AccountID: input.AccountID,
+			Holds:     map[string]int64{},
+		}
+		if w.UserID == "" {
+			w.UserID = "usr-" + input.AccountID
+		}
+	}
+	before := w.Snapshot()
+	if err := w.AddHold(input.HoldType, input.AmountCents); err != nil {
+		return HoldResult{}, err
+	}
+	after := w.Snapshot()
+	createdAt := nowUTC()
+	entry := Entry{
+		ID:            randomID(),
+		EventType:     input.HoldType + "_hold",
+		AccountID:     input.AccountID,
+		UserID:        w.UserID,
+		WorkspaceID:   workspaceOrResource(input.WorkspaceID),
+		SourceEventID: input.SourceEventID,
+		AmountCents:   input.AmountCents,
+		Currency:      "CNY",
+		CreatedAt:     createdAt,
+	}
+	if input.HoldType == "compute" {
+		entry.ComputeID = input.ResourceID
+	}
+	if input.HoldType == "storage" {
+		entry.StorageID = input.ResourceID
+	}
+	metadata := cloneMetadataMap(input.Metadata)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["holdType"] = input.HoldType
+	metadata["resourceId"] = input.ResourceID
+	metadata["packageId"] = input.PackageID
+	entryPayload, err := json.Marshal(metadata)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	if err := insertLedgerEntry(ctx, tx, entry, entryPayload); err != nil {
+		return HoldResult{}, err
+	}
+	transaction := wallet.NewTransaction(wallet.TransactionInput{
+		UserID:              w.UserID,
+		AccountID:           input.AccountID,
+		WorkspaceID:         entry.WorkspaceID,
+		Type:                wallet.TransactionHold,
+		AmountCents:         input.AmountCents,
+		Currency:            "CNY",
+		SourceEventID:       input.SourceEventID,
+		LedgerEntryID:       entry.ID,
+		BalanceBeforeCents:  before.BalanceCents,
+		BalanceAfterCents:   after.BalanceCents,
+		FrozenBeforeCents:   before.FrozenCents,
+		FrozenAfterCents:    after.FrozenCents,
+		AvailableAfterCents: after.AvailableCents,
+		Metadata:            metadata,
+		CreatedAt:           createdAt,
+	})
+	if err := insertWalletTransaction(ctx, tx, transaction); err != nil {
+		return HoldResult{}, err
+	}
+	if err := s.upsertWallet(ctx, tx, w, after, createdAt); err != nil {
+		return HoldResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return HoldResult{}, err
+	}
+	committed = true
+	return HoldResult{
+		Wallet:      after,
+		Entry:       entry,
+		Transaction: transaction,
+		Created:     true,
+	}, nil
+}
+
+func (s *PostgresStore) ReleaseHolds(ctx context.Context, input ReleaseHoldInput) (ReleaseHoldResult, error) {
+	if err := validateReleaseHoldInput(input); err != nil {
+		return ReleaseHoldResult{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ReleaseHoldResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	multi := len(input.HoldTypes) > 1
+	existingEntries, existingTransactions, err := loadExistingHoldRelease(ctx, tx, input, multi)
+	if err != nil {
+		return ReleaseHoldResult{}, err
+	}
+	if len(existingEntries) > 0 {
+		w, _, err := s.walletForUpdate(ctx, tx, input.AccountID)
+		if err != nil {
+			return ReleaseHoldResult{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return ReleaseHoldResult{}, err
+		}
+		committed = true
+		return ReleaseHoldResult{
+			Wallet:       w.Snapshot(),
+			Entries:      existingEntries,
+			Transactions: existingTransactions,
+			Created:      false,
+		}, nil
+	}
+
+	w, found, err := s.walletForUpdate(ctx, tx, input.AccountID)
+	if err != nil {
+		return ReleaseHoldResult{}, err
+	}
+	if !found {
+		w = wallet.Wallet{
+			UserID:    "usr-" + input.AccountID,
+			AccountID: input.AccountID,
+			Holds:     map[string]int64{},
+		}
+	}
+	var entries []Entry
+	var transactions []wallet.Transaction
+	for _, holdType := range input.HoldTypes {
+		before := w.Snapshot()
+		released := w.ReleaseHold(holdType, before.Holds[holdType])
+		if released <= 0 {
+			continue
+		}
+		after := w.Snapshot()
+		createdAt := nowUTC()
+		sourceEventID := holdReleaseSourceEventID(input.SourceEventID, holdType, multi)
+		entry := Entry{
+			ID:            randomID(),
+			EventType:     holdType + "_hold_released",
+			AccountID:     input.AccountID,
+			UserID:        w.UserID,
+			WorkspaceID:   workspaceOrResource(input.WorkspaceID),
+			SourceEventID: sourceEventID,
+			AmountCents:   -released,
+			Currency:      "CNY",
+			CreatedAt:     createdAt,
+		}
+		if holdType == "compute" {
+			entry.ComputeID = input.ComputeID
+		}
+		if holdType == "storage" {
+			entry.StorageID = input.StorageID
+		}
+		entryPayload, err := json.Marshal(map[string]any{
+			"reason":        input.Reason,
+			"holdType":      holdType,
+			"sourceEventId": input.SourceEventID,
+		})
+		if err != nil {
+			return ReleaseHoldResult{}, err
+		}
+		if err := insertLedgerEntry(ctx, tx, entry, entryPayload); err != nil {
+			return ReleaseHoldResult{}, err
+		}
+		transaction := wallet.NewTransaction(wallet.TransactionInput{
+			UserID:              w.UserID,
+			AccountID:           input.AccountID,
+			WorkspaceID:         entry.WorkspaceID,
+			Type:                wallet.TransactionHoldRelease,
+			AmountCents:         -released,
+			Currency:            "CNY",
+			SourceEventID:       sourceEventID,
+			LedgerEntryID:       entry.ID,
+			BalanceBeforeCents:  before.BalanceCents,
+			BalanceAfterCents:   after.BalanceCents,
+			FrozenBeforeCents:   before.FrozenCents,
+			FrozenAfterCents:    after.FrozenCents,
+			AvailableAfterCents: after.AvailableCents,
+			Metadata: map[string]any{
+				"reason":        input.Reason,
+				"holdType":      holdType,
+				"sourceEventId": input.SourceEventID,
+			},
+			CreatedAt: createdAt,
+		})
+		if err := insertWalletTransaction(ctx, tx, transaction); err != nil {
+			return ReleaseHoldResult{}, err
+		}
+		entries = append(entries, entry)
+		transactions = append(transactions, transaction)
+	}
+	after := w.Snapshot()
+	if len(entries) > 0 {
+		if err := s.upsertWallet(ctx, tx, w, after, nowUTC()); err != nil {
+			return ReleaseHoldResult{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return ReleaseHoldResult{}, err
+	}
+	committed = true
+	return ReleaseHoldResult{
+		Wallet:       after,
+		Entries:      entries,
+		Transactions: transactions,
+		Created:      true,
 	}, nil
 }
 
@@ -1058,6 +1329,126 @@ func loadRequestUsageLogByID(ctx context.Context, tx *sql.Tx, id string) (Reques
 func loadLedgerEntryByID(ctx context.Context, tx *sql.Tx, id string) (Entry, error) {
 	row := tx.QueryRowContext(ctx, selectLedgerEntryColumns+` FROM ledger_entries WHERE id = $1`, id)
 	return scanEntry(row)
+}
+
+func insertLedgerEntry(ctx context.Context, tx *sql.Tx, entry Entry, payload []byte) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO ledger_entries (
+			id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id,
+			source_event_id, request_fingerprint, amount_cents, currency, payload, created_at
+		) VALUES (
+			$1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''),
+			NULLIF($9, ''), NULLIF($10, ''), $11, $12, $13, $14
+		)`,
+		entry.ID,
+		entry.EventType,
+		entry.AccountID,
+		entry.UserID,
+		entry.WorkspaceID,
+		entry.ComputeID,
+		entry.StorageID,
+		entry.AttachmentID,
+		entry.SourceEventID,
+		entry.RequestFingerprint,
+		entry.AmountCents,
+		entry.Currency,
+		payload,
+		entry.CreatedAt,
+	)
+	return err
+}
+
+func insertWalletTransaction(ctx context.Context, tx *sql.Tx, transaction wallet.Transaction) error {
+	payload, err := json.Marshal(transaction)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO wallet_transactions (
+			id, account_id, user_id, workspace_id, transaction_type, amount_cents, currency, source_event_id,
+			ledger_entry_id, usage_log_id, funding_source, balance_before_cents, balance_after_cents,
+			frozen_before_cents, frozen_after_cents, available_after_cents, payload, created_at
+		) VALUES (
+			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, NULLIF($8, ''),
+			NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), $12, $13, $14, $15, $16, $17, $18
+		)`,
+		transaction.ID,
+		transaction.AccountID,
+		transaction.UserID,
+		transaction.WorkspaceID,
+		string(transaction.Type),
+		transaction.AmountCents,
+		transaction.Currency,
+		transaction.SourceEventID,
+		transaction.LedgerEntryID,
+		transaction.UsageLogID,
+		transaction.FundingSource,
+		transaction.BalanceBeforeCents,
+		transaction.BalanceAfterCents,
+		transaction.FrozenBeforeCents,
+		transaction.FrozenAfterCents,
+		transaction.AvailableAfterCents,
+		payload,
+		transaction.CreatedAt,
+	)
+	return err
+}
+
+func loadExistingHoldRelease(ctx context.Context, tx *sql.Tx, input ReleaseHoldInput, multi bool) ([]Entry, []wallet.Transaction, error) {
+	var entries []Entry
+	var transactions []wallet.Transaction
+	for _, holdType := range input.HoldTypes {
+		sourceEventID := holdReleaseSourceEventID(input.SourceEventID, holdType, multi)
+		existing, err := entriesForSourceEvent(ctx, tx, sourceEventID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(existing) == 0 {
+			continue
+		}
+		if len(existing) > 1 {
+			return nil, nil, ErrIdempotencyConflict
+		}
+		entry := existing[0]
+		if !sameHoldReleaseReplay(entry, input, holdType, sourceEventID) {
+			return nil, nil, ErrIdempotencyConflict
+		}
+		transaction, err := loadWalletTransactionBySource(ctx, tx, sourceEventID)
+		if err != nil {
+			return nil, nil, err
+		}
+		entries = append(entries, entry)
+		transactions = append(transactions, transaction)
+	}
+	return entries, transactions, nil
+}
+
+func entriesForSourceEvent(ctx context.Context, tx *sql.Tx, sourceEventID string) ([]Entry, error) {
+	rows, err := tx.QueryContext(ctx, selectLedgerEntryColumns+` FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`, sourceEventID, "")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEntries(rows)
+}
+
+func sameHoldReleaseReplay(entry Entry, input ReleaseHoldInput, holdType string, sourceEventID string) bool {
+	expected := AppendEntryInput{
+		EventType:     holdType + "_hold_released",
+		AccountID:     input.AccountID,
+		UserID:        entry.UserID,
+		WorkspaceID:   workspaceOrResource(input.WorkspaceID),
+		SourceEventID: sourceEventID,
+		AmountCents:   entry.AmountCents,
+		Currency:      "CNY",
+	}
+	if holdType == "compute" {
+		expected.ComputeID = input.ComputeID
+	}
+	if holdType == "storage" {
+		expected.StorageID = input.StorageID
+	}
+	return sameReplayPayload(entry, expected)
 }
 
 type walletScanner interface {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/RenDeHuang/OPL-Ledger/internal/ledger"
+	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
 func TestAppendLedgerEntryIsIdempotent(t *testing.T) {
@@ -440,6 +441,143 @@ func TestRequestUsageAPIQuotaExceededDoesNotMutateBillingState(t *testing.T) {
 	}
 }
 
+func TestHoldAPIAppendsIdempotentComputeHold(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":1000,
+		"reason":"owner_credit_1"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+
+	body := []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"holdType":"compute",
+		"amountCents":600,
+		"sourceEventId":"compute_resource:compute_1:created",
+		"resourceId":"compute_1",
+		"packageId":"basic"
+	}`)
+	first := postHold(t, server, body)
+	if first.code != http.StatusCreated {
+		t.Fatalf("first hold status = %d body=%s", first.code, first.body)
+	}
+	second := postHold(t, server, body)
+	if second.code != http.StatusOK {
+		t.Fatalf("second hold status = %d body=%s", second.code, second.body)
+	}
+	if first.result.Entry.ID != second.result.Entry.ID {
+		t.Fatalf("expected same hold entry, got %q and %q", first.result.Entry.ID, second.result.Entry.ID)
+	}
+	if first.result.Transaction.ID != second.result.Transaction.ID {
+		t.Fatalf("expected same hold transaction, got %q and %q", first.result.Transaction.ID, second.result.Transaction.ID)
+	}
+	if first.result.Entry.EventType != "compute_hold" || first.result.Entry.AmountCents != 600 || first.result.Entry.ComputeID != "compute_1" {
+		t.Fatalf("unexpected hold entry: %+v", first.result.Entry)
+	}
+	if first.result.Transaction.Type != wallet.TransactionHold || first.result.Transaction.AmountCents != 600 || first.result.Transaction.LedgerEntryID != first.result.Entry.ID {
+		t.Fatalf("unexpected hold transaction: %+v", first.result.Transaction)
+	}
+	if second.result.Wallet.BalanceCents != 1000 || second.result.Wallet.FrozenCents != 600 || second.result.Wallet.AvailableCents != 400 || second.result.Wallet.Holds["compute"] != 600 {
+		t.Fatalf("unexpected replay wallet: %+v", second.result.Wallet)
+	}
+}
+
+func TestHoldAPIInsufficientAvailableBalanceDoesNotMutateBillingState(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":500,
+		"reason":"owner_credit_1"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+
+	rejected := postHold(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"holdType":"compute",
+		"amountCents":600,
+		"sourceEventId":"compute_resource:compute_1:created",
+		"resourceId":"compute_1"
+	}`))
+	if rejected.code != http.StatusBadRequest {
+		t.Fatalf("rejected hold status = %d body=%s", rejected.code, rejected.body)
+	}
+
+	summary := httptest.NewRecorder()
+	server.ServeHTTP(summary, httptest.NewRequest(http.MethodGet, "/api/v1/ledger/summary?accountId=acct_1", nil))
+	if summary.Code != http.StatusOK {
+		t.Fatalf("summary status = %d body=%s", summary.Code, summary.Body.String())
+	}
+	var ledgerSummary ledger.Summary
+	if err := json.Unmarshal(summary.Body.Bytes(), &ledgerSummary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if ledgerSummary.BalanceCents != 500 || ledgerSummary.EntryCount != 1 {
+		t.Fatalf("unexpected summary after rejected hold: %+v", ledgerSummary)
+	}
+}
+
+func TestHoldReleaseAPIReleasesExistingComputeHold(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":1000,
+		"reason":"owner_credit_1"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+	hold := postHold(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"holdType":"compute",
+		"amountCents":600,
+		"sourceEventId":"compute_resource:compute_1:created",
+		"resourceId":"compute_1"
+	}`))
+	if hold.code != http.StatusCreated {
+		t.Fatalf("hold status = %d body=%s", hold.code, hold.body)
+	}
+
+	body := []byte(`{
+		"accountId":"acct_1",
+		"workspaceId":"ws_1",
+		"holdTypes":["compute"],
+		"sourceEventId":"compute_resource:compute_1:stopped",
+		"computeId":"compute_1",
+		"reason":"stop_compute"
+	}`)
+	released := postHoldRelease(t, server, body)
+	if released.code != http.StatusCreated {
+		t.Fatalf("release status = %d body=%s", released.code, released.body)
+	}
+	replayed := postHoldRelease(t, server, body)
+	if replayed.code != http.StatusOK {
+		t.Fatalf("release replay status = %d body=%s", replayed.code, replayed.body)
+	}
+	if len(released.result.Entries) != 1 || released.result.Entries[0].EventType != "compute_hold_released" || released.result.Entries[0].AmountCents != -600 {
+		t.Fatalf("unexpected release entries: %+v", released.result.Entries)
+	}
+	if len(released.result.Transactions) != 1 || released.result.Transactions[0].Type != wallet.TransactionHoldRelease || released.result.Transactions[0].LedgerEntryID != released.result.Entries[0].ID {
+		t.Fatalf("unexpected release transactions: %+v", released.result.Transactions)
+	}
+	if replayed.result.Wallet.BalanceCents != 1000 || replayed.result.Wallet.FrozenCents != 0 || replayed.result.Wallet.AvailableCents != 1000 || replayed.result.Wallet.Holds["compute"] != 0 {
+		t.Fatalf("unexpected release replay wallet: %+v", replayed.result.Wallet)
+	}
+}
+
 func TestAuditEventAPIPostsAndQueriesEvents(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	body := []byte(`{
@@ -644,6 +782,28 @@ type manualTopUpResponse struct {
 	result ledger.ManualTopUpResult
 }
 
+type holdAPIResponse struct {
+	code   int
+	body   string
+	result struct {
+		Wallet      wallet.Snapshot    `json:"wallet"`
+		Entry       ledger.Entry       `json:"entry"`
+		Transaction wallet.Transaction `json:"transaction"`
+		Created     bool               `json:"created"`
+	}
+}
+
+type holdReleaseAPIResponse struct {
+	code   int
+	body   string
+	result struct {
+		Wallet       wallet.Snapshot      `json:"wallet"`
+		Entries      []ledger.Entry       `json:"entries"`
+		Transactions []wallet.Transaction `json:"transactions"`
+		Created      bool                 `json:"created"`
+	}
+}
+
 func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppendResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -652,6 +812,32 @@ func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppen
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.entry); err != nil {
 			t.Fatalf("decode append response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func postHold(t *testing.T, server http.Handler, body []byte) holdAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/holds", bytes.NewReader(body)))
+	response := holdAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.result); err != nil {
+			t.Fatalf("decode hold response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func postHoldRelease(t *testing.T, server http.Handler, body []byte) holdReleaseAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/holds/release", bytes.NewReader(body)))
+	response := holdReleaseAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.result); err != nil {
+			t.Fatalf("decode hold release response: %v body=%s", err, rec.Body.String())
 		}
 	}
 	return response

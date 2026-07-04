@@ -32,6 +32,7 @@ type MemoryStore struct {
 	byRequestFingerprint  map[string]Entry
 	topUpsBySourceEvent   map[string]ManualTopUp
 	transactionsBySource  map[string]wallet.Transaction
+	releaseHoldsBySource  map[string]ReleaseHoldResult
 	requestUsageBySource  map[string]RequestUsageResult
 	requestUsageByRequest map[string]RequestUsageResult
 	auditBySourceEvent    map[string]AuditEvent
@@ -45,6 +46,7 @@ func NewMemoryStore() *MemoryStore {
 		wallets:               map[string]wallet.Wallet{},
 		topUpsBySourceEvent:   map[string]ManualTopUp{},
 		transactionsBySource:  map[string]wallet.Transaction{},
+		releaseHoldsBySource:  map[string]ReleaseHoldResult{},
 		requestUsageBySource:  map[string]RequestUsageResult{},
 		requestUsageByRequest: map[string]RequestUsageResult{},
 		auditBySourceEvent:    map[string]AuditEvent{},
@@ -275,6 +277,189 @@ func (s *MemoryStore) ManualTopUp(_ context.Context, input ManualTopUpInput) (Ma
 		AuditEvent:  audit,
 		Created:     true,
 	}, nil
+}
+
+func (s *MemoryStore) CreateHold(_ context.Context, input HoldInput) (HoldResult, error) {
+	if err := validateHoldInput(input); err != nil {
+		return HoldResult{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if entry, ok := s.bySourceEvent[input.SourceEventID]; ok {
+		replay := holdAppendInput(input)
+		if input.UserID == "" {
+			replay.UserID = entry.UserID
+		}
+		if !sameReplayPayload(entry, replay) {
+			return HoldResult{}, ErrIdempotencyConflict
+		}
+		transaction, ok := s.transactionsBySource[input.SourceEventID]
+		if !ok {
+			return HoldResult{}, errors.New("wallet_transaction_record_missing")
+		}
+		w := s.wallets[input.AccountID]
+		return HoldResult{
+			Wallet:      w.Snapshot(),
+			Entry:       entry,
+			Transaction: transaction,
+			Created:     false,
+		}, nil
+	}
+
+	w := s.wallets[input.AccountID]
+	if w.AccountID == "" {
+		w.AccountID = input.AccountID
+		w.UserID = input.UserID
+		if w.UserID == "" {
+			w.UserID = "usr-" + input.AccountID
+		}
+	}
+	before := w.Snapshot()
+	if err := w.AddHold(input.HoldType, input.AmountCents); err != nil {
+		return HoldResult{}, err
+	}
+	after := w.Snapshot()
+	createdAt := time.Now().UTC()
+	entry := Entry{
+		ID:            randomID(),
+		EventType:     input.HoldType + "_hold",
+		AccountID:     input.AccountID,
+		UserID:        w.UserID,
+		WorkspaceID:   workspaceOrResource(input.WorkspaceID),
+		SourceEventID: input.SourceEventID,
+		AmountCents:   input.AmountCents,
+		Currency:      "CNY",
+		CreatedAt:     createdAt,
+	}
+	if input.HoldType == "compute" {
+		entry.ComputeID = input.ResourceID
+	}
+	if input.HoldType == "storage" {
+		entry.StorageID = input.ResourceID
+	}
+	metadata := cloneMetadataMap(input.Metadata)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["holdType"] = input.HoldType
+	metadata["resourceId"] = input.ResourceID
+	metadata["packageId"] = input.PackageID
+	transaction := wallet.NewTransaction(wallet.TransactionInput{
+		UserID:              w.UserID,
+		AccountID:           input.AccountID,
+		WorkspaceID:         entry.WorkspaceID,
+		Type:                wallet.TransactionHold,
+		AmountCents:         input.AmountCents,
+		Currency:            "CNY",
+		SourceEventID:       input.SourceEventID,
+		LedgerEntryID:       entry.ID,
+		BalanceBeforeCents:  before.BalanceCents,
+		BalanceAfterCents:   after.BalanceCents,
+		FrozenBeforeCents:   before.FrozenCents,
+		FrozenAfterCents:    after.FrozenCents,
+		AvailableAfterCents: after.AvailableCents,
+		Metadata:            metadata,
+		CreatedAt:           createdAt,
+	})
+	s.wallets[input.AccountID] = w
+	s.entries = append(s.entries, entry)
+	s.bySourceEvent[input.SourceEventID] = entry
+	s.walletTransactions = append(s.walletTransactions, transaction)
+	s.transactionsBySource[input.SourceEventID] = transaction
+	return HoldResult{
+		Wallet:      after,
+		Entry:       entry,
+		Transaction: transaction,
+		Created:     true,
+	}, nil
+}
+
+func (s *MemoryStore) ReleaseHolds(_ context.Context, input ReleaseHoldInput) (ReleaseHoldResult, error) {
+	if err := validateReleaseHoldInput(input); err != nil {
+		return ReleaseHoldResult{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if existing, ok := s.releaseHoldsBySource[input.SourceEventID]; ok {
+		w := s.wallets[input.AccountID]
+		existing.Wallet = w.Snapshot()
+		existing.Created = false
+		return existing, nil
+	}
+
+	w := s.wallets[input.AccountID]
+	if w.AccountID == "" {
+		w.AccountID = input.AccountID
+		w.UserID = "usr-" + input.AccountID
+	}
+	var entries []Entry
+	var transactions []wallet.Transaction
+	multi := len(input.HoldTypes) > 1
+	for _, holdType := range input.HoldTypes {
+		before := w.Snapshot()
+		released := w.ReleaseHold(holdType, before.Holds[holdType])
+		if released <= 0 {
+			continue
+		}
+		after := w.Snapshot()
+		createdAt := time.Now().UTC()
+		sourceEventID := holdReleaseSourceEventID(input.SourceEventID, holdType, multi)
+		entry := Entry{
+			ID:            randomID(),
+			EventType:     holdType + "_hold_released",
+			AccountID:     input.AccountID,
+			UserID:        w.UserID,
+			WorkspaceID:   workspaceOrResource(input.WorkspaceID),
+			SourceEventID: sourceEventID,
+			AmountCents:   -released,
+			Currency:      "CNY",
+			CreatedAt:     createdAt,
+		}
+		if holdType == "compute" {
+			entry.ComputeID = input.ComputeID
+		}
+		if holdType == "storage" {
+			entry.StorageID = input.StorageID
+		}
+		transaction := wallet.NewTransaction(wallet.TransactionInput{
+			UserID:              w.UserID,
+			AccountID:           input.AccountID,
+			WorkspaceID:         entry.WorkspaceID,
+			Type:                wallet.TransactionHoldRelease,
+			AmountCents:         -released,
+			Currency:            "CNY",
+			SourceEventID:       sourceEventID,
+			LedgerEntryID:       entry.ID,
+			BalanceBeforeCents:  before.BalanceCents,
+			BalanceAfterCents:   after.BalanceCents,
+			FrozenBeforeCents:   before.FrozenCents,
+			FrozenAfterCents:    after.FrozenCents,
+			AvailableAfterCents: after.AvailableCents,
+			Metadata: map[string]any{
+				"reason":        input.Reason,
+				"holdType":      holdType,
+				"sourceEventId": input.SourceEventID,
+			},
+			CreatedAt: createdAt,
+		})
+		entries = append(entries, entry)
+		transactions = append(transactions, transaction)
+		s.entries = append(s.entries, entry)
+		s.bySourceEvent[sourceEventID] = entry
+		s.walletTransactions = append(s.walletTransactions, transaction)
+		s.transactionsBySource[sourceEventID] = transaction
+	}
+	s.wallets[input.AccountID] = w
+	result := ReleaseHoldResult{
+		Wallet:       w.Snapshot(),
+		Entries:      entries,
+		Transactions: transactions,
+		Created:      true,
+	}
+	s.releaseHoldsBySource[input.SourceEventID] = result
+	return result, nil
 }
 
 func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageInput) (RequestUsageResult, error) {

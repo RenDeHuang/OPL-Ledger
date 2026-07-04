@@ -164,6 +164,42 @@ type ManualTopUp struct {
 	CreatedAt           time.Time `json:"createdAt"`
 }
 
+type HoldInput struct {
+	AccountID     string         `json:"accountId"`
+	UserID        string         `json:"userId,omitempty"`
+	WorkspaceID   string         `json:"workspaceId,omitempty"`
+	HoldType      string         `json:"holdType"`
+	AmountCents   int64          `json:"amountCents"`
+	SourceEventID string         `json:"sourceEventId"`
+	ResourceID    string         `json:"resourceId,omitempty"`
+	PackageID     string         `json:"packageId,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+}
+
+type HoldResult struct {
+	Wallet      wallet.Snapshot    `json:"wallet"`
+	Entry       Entry              `json:"entry"`
+	Transaction wallet.Transaction `json:"transaction"`
+	Created     bool               `json:"created"`
+}
+
+type ReleaseHoldInput struct {
+	AccountID     string   `json:"accountId"`
+	WorkspaceID   string   `json:"workspaceId,omitempty"`
+	HoldTypes     []string `json:"holdTypes"`
+	SourceEventID string   `json:"sourceEventId"`
+	ComputeID     string   `json:"computeId,omitempty"`
+	StorageID     string   `json:"storageId,omitempty"`
+	Reason        string   `json:"reason,omitempty"`
+}
+
+type ReleaseHoldResult struct {
+	Wallet       wallet.Snapshot      `json:"wallet"`
+	Entries      []Entry              `json:"entries"`
+	Transactions []wallet.Transaction `json:"transactions"`
+	Created      bool                 `json:"created"`
+}
+
 type AuditEvent = auditlog.Event
 type AuditEventInput = auditlog.EventInput
 type AuditEventFilter = auditlog.EventFilter

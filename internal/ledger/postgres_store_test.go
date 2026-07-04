@@ -316,6 +316,94 @@ func TestPostgresStoreRecordRequestUsageQuotaExceededRollsBackBeforeMutation(t *
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreCreateHoldWritesAccountingLoopInOneTransaction(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id, source_event_id, request_fingerprint, amount_cents, currency, created_at FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`)).
+		WithArgs("compute_resource:compute_1:created", "").
+		WillReturnRows(ledgerEntryRows())
+	mock.ExpectQuery(`SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds`).
+		WithArgs("acct_1").
+		WillReturnRows(walletRows().AddRow("wal_1", "usr_1", "acct_1", int64(1000), int64(0), int64(1000), []byte(`{}`), createdAt, createdAt))
+	mock.ExpectExec(`INSERT INTO ledger_entries`).
+		WithArgs(sqlmock.AnyArg(), "compute_hold", "acct_1", "usr_1", "ws_1", "compute_1", "", "", "compute_resource:compute_1:created", "", int64(600), "CNY", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallet_transactions`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "hold", int64(600), "CNY", "compute_resource:compute_1:created", sqlmock.AnyArg(), "", "", int64(1000), int64(1000), int64(0), int64(600), int64(400), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(sqlmock.AnyArg(), "usr_1", "acct_1", int64(1000), int64(600), int64(1000), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := store.CreateHold(context.Background(), HoldInput{
+		AccountID:     "acct_1",
+		UserID:        "usr_1",
+		WorkspaceID:   "ws_1",
+		HoldType:      "compute",
+		AmountCents:   600,
+		SourceEventID: "compute_resource:compute_1:created",
+		ResourceID:    "compute_1",
+		PackageID:     "basic",
+	})
+	if err != nil {
+		t.Fatalf("create hold: %v", err)
+	}
+	if !result.Created {
+		t.Fatalf("expected created result")
+	}
+	if result.Wallet.FrozenCents != 600 || result.Wallet.AvailableCents != 400 || result.Entry.EventType != "compute_hold" || result.Transaction.Type != wallet.TransactionHold {
+		t.Fatalf("unexpected hold result: %+v", result)
+	}
+	assertSQLExpectations(t, mock)
+}
+
+func TestPostgresStoreReleaseHoldsWritesAccountingLoopInOneTransaction(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id, source_event_id, request_fingerprint, amount_cents, currency, created_at FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`)).
+		WithArgs("compute_resource:compute_1:stopped", "").
+		WillReturnRows(ledgerEntryRows())
+	mock.ExpectQuery(`SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds`).
+		WithArgs("acct_1").
+		WillReturnRows(walletRows().AddRow("wal_1", "usr_1", "acct_1", int64(1000), int64(600), int64(1000), []byte(`{"compute":600}`), createdAt, createdAt))
+	mock.ExpectExec(`INSERT INTO ledger_entries`).
+		WithArgs(sqlmock.AnyArg(), "compute_hold_released", "acct_1", "usr_1", "ws_1", "compute_1", "", "", "compute_resource:compute_1:stopped", "", int64(-600), "CNY", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallet_transactions`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "ws_1", "hold_release", int64(-600), "CNY", "compute_resource:compute_1:stopped", sqlmock.AnyArg(), "", "", int64(1000), int64(1000), int64(600), int64(0), int64(1000), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(sqlmock.AnyArg(), "usr_1", "acct_1", int64(1000), int64(0), int64(1000), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := store.ReleaseHolds(context.Background(), ReleaseHoldInput{
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		HoldTypes:     []string{"compute"},
+		SourceEventID: "compute_resource:compute_1:stopped",
+		ComputeID:     "compute_1",
+		Reason:        "stop_compute",
+	})
+	if err != nil {
+		t.Fatalf("release holds: %v", err)
+	}
+	if !result.Created {
+		t.Fatalf("expected created result")
+	}
+	if result.Wallet.FrozenCents != 0 || len(result.Entries) != 1 || result.Entries[0].AmountCents != -600 || len(result.Transactions) != 1 || result.Transactions[0].Type != wallet.TransactionHoldRelease {
+		t.Fatalf("unexpected release result: %+v", result)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreAppendEvidenceRecordCreatesPersistentEvidenceRow(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

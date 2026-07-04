@@ -58,6 +58,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/ledger/entries", s.listEntries)
 	s.mux.HandleFunc("GET /api/v1/ledger/summary", s.summary)
 	s.mux.HandleFunc("POST /api/v1/billing/topups", s.manualTopUp)
+	s.mux.HandleFunc("POST /api/v1/billing/holds", s.createHold)
+	s.mux.HandleFunc("POST /api/v1/billing/holds/release", s.releaseHolds)
 	s.mux.HandleFunc("POST /api/v1/billing/request-usage", s.recordRequestUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/reconciliation", s.recordReconciliation)
 	s.mux.HandleFunc("GET /api/v1/billing/reconciliation/latest", s.latestReconciliation)
@@ -127,6 +129,48 @@ func (s *Server) manualTopUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.store.ManualTopUp(r.Context(), input)
+	if err != nil {
+		writeAppendError(w, err)
+		return
+	}
+	status := http.StatusCreated
+	if !result.Created {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, result)
+}
+
+func (s *Server) createHold(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
+	var input ledger.HoldInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
+		return
+	}
+	result, err := s.store.CreateHold(r.Context(), input)
+	if err != nil {
+		writeAppendError(w, err)
+		return
+	}
+	status := http.StatusCreated
+	if !result.Created {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, result)
+}
+
+func (s *Server) releaseHolds(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
+	var input ledger.ReleaseHoldInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
+		return
+	}
+	result, err := s.store.ReleaseHolds(r.Context(), input)
 	if err != nil {
 		writeAppendError(w, err)
 		return
