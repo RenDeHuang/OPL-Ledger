@@ -48,6 +48,32 @@ The dry run must produce:
 - `kubernetes_evidence_snapshots.preview.json`
 - `migration-report.json`
 
+## Local Command
+
+Run the local preview tool from the `opl-ledger` repository root:
+
+```bash
+go run ./cmd/opl-ledger-migration-dry-run \
+  -input .local/migration-dry-run/input \
+  -output .local/migration-dry-run
+```
+
+The command reads only local JSON files, writes only local preview/report files,
+and does not connect to production Console, Ledger, Tencent Cloud, Kubernetes,
+or PostgreSQL.
+
+Current executable coverage:
+
+- `wallets.preview.json`
+- `ledger_entries.preview.json`
+- `wallet_transactions.preview.json`
+- `manual_topups.preview.json`
+- `migration-report.json`
+
+The remaining preview files in this document are still required before final
+cutover approval; this first executable slice covers the manual top-up accounting
+loop and its wallet/ledger/transaction references.
+
 ## Wallets
 
 Source:

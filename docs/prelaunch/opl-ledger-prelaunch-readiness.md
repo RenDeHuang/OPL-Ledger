@@ -143,7 +143,7 @@ Implemented:
 - read-only Deployment evidence collector primitive plus external Kubernetes evidence snapshot append/list API with PostgreSQL persistence for redacted snapshots;
 - service-to-service Bearer token authentication for mutating endpoints and admin Bearer token authorization for operator billing/evidence reads when tokens are configured;
 - local-only shadow mode comparison procedure and safety rules;
-- local data migration dry-run mapping and required report format;
+- local data migration dry-run mapping, required report format, and executable wallet/manual-topup preview tool;
 - cutover and rollback checklists requiring explicit production approval;
 - local pre-launch verification commands and PostgreSQL smoke-test procedure;
 - React + TypeScript operator UI baseline.
