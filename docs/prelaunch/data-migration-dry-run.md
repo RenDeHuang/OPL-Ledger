@@ -192,6 +192,9 @@ Validation:
 - `source_event_id` is unique.
 - preview rows preserve distinct `sourceEventId` and operator-visible `reason` when both exist.
 - linked wallet transaction, ledger entry, and audit event exist.
+- linked ledger entry is `credit` and matches top-up `source_event_id`, `amount_cents`, and account id.
+- linked wallet transaction is `credit` and matches top-up source, amount, account id, and ledger entry id.
+- linked audit event is `account.credit_granted` and targets the manual top-up id.
 
 ## Request Usage
 

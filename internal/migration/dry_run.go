@@ -231,6 +231,9 @@ func (r *dryRun) validateManualTopups(topups []map[string]any, ledgerEntries []m
 	ledgerIDs := idSet(ledgerEntries)
 	transactionIDs := idSet(walletTransactions)
 	auditIDs := idSet(auditEvents)
+	ledgerByID := recordByID(ledgerEntries)
+	transactionByID := recordByID(walletTransactions)
+	auditByID := recordByID(auditEvents)
 	sourceSeen := map[string]bool{}
 	for _, topup := range topups {
 		source := fmt.Sprint(topup["source_event_id"])
@@ -245,16 +248,62 @@ func (r *dryRun) validateManualTopups(topups []map[string]any, ledgerEntries []m
 		if id := fmt.Sprint(topup["ledger_entry_id"]); id != "" && !ledgerIDs[id] {
 			r.mismatch("manual topup references missing ledger entry: " + id)
 			r.block("manual_topup_missing_ledger_entry")
+		} else if id != "" {
+			r.validateTopUpLedgerEntry(topup, ledgerByID[id])
 		}
 		if id := fmt.Sprint(topup["wallet_transaction_id"]); id != "" && !transactionIDs[id] {
 			r.mismatch("manual topup references missing wallet transaction: " + id)
 			r.block("manual_topup_missing_wallet_transaction")
+		} else if id != "" {
+			r.validateTopUpWalletTransaction(topup, transactionByID[id])
 		}
 		if id := fmt.Sprint(topup["audit_event_id"]); id != "" && !auditIDs[id] {
 			r.mismatch("manual topup references missing audit event: " + id)
 			r.block("manual_topup_missing_audit_event")
+		} else if id != "" {
+			r.validateTopUpAuditEvent(topup, auditByID[id])
 		}
 	}
+}
+
+func (r *dryRun) validateTopUpLedgerEntry(topup map[string]any, entry map[string]any) {
+	if fmt.Sprint(entry["event_type"]) != "credit" {
+		r.chainMismatch("manual topup ledger entry is not credit: " + fmt.Sprint(topup["id"]))
+	}
+	r.requireEqual("manual topup ledger source mismatch", topup, "source_event_id", entry, "source_event_id")
+	r.requireEqual("manual topup ledger amount mismatch", topup, "amount_cents", entry, "amount_cents")
+	r.requireEqual("manual topup ledger account mismatch", topup, "target_account_id", entry, "account_id")
+}
+
+func (r *dryRun) validateTopUpWalletTransaction(topup map[string]any, transaction map[string]any) {
+	if fmt.Sprint(transaction["transaction_type"]) != "credit" {
+		r.chainMismatch("manual topup wallet transaction is not credit: " + fmt.Sprint(topup["id"]))
+	}
+	r.requireEqual("manual topup wallet transaction source mismatch", topup, "source_event_id", transaction, "source_event_id")
+	r.requireEqual("manual topup wallet transaction amount mismatch", topup, "amount_cents", transaction, "amount_cents")
+	r.requireEqual("manual topup wallet transaction account mismatch", topup, "target_account_id", transaction, "account_id")
+	r.requireEqual("manual topup wallet transaction ledger mismatch", topup, "ledger_entry_id", transaction, "ledger_entry_id")
+}
+
+func (r *dryRun) validateTopUpAuditEvent(topup map[string]any, audit map[string]any) {
+	if fmt.Sprint(audit["action"]) != "account.credit_granted" {
+		r.chainMismatch("manual topup audit action mismatch: " + fmt.Sprint(topup["id"]))
+	}
+	r.requireEqual("manual topup audit account mismatch", topup, "target_account_id", audit, "account_id")
+	r.requireEqual("manual topup audit target mismatch", topup, "id", audit, "target_id")
+	r.requireEqual("manual topup audit source mismatch", topup, "id", audit, "source_event_id")
+}
+
+func (r *dryRun) requireEqual(message string, left map[string]any, leftKey string, right map[string]any, rightKey string) {
+	if fmt.Sprint(left[leftKey]) == fmt.Sprint(right[rightKey]) {
+		return
+	}
+	r.chainMismatch(fmt.Sprintf("%s: %s=%v %s=%v", message, leftKey, left[leftKey], rightKey, right[rightKey]))
+}
+
+func (r *dryRun) chainMismatch(message string) {
+	r.mismatch(message)
+	r.block("manual_topup_chain_inconsistent")
 }
 
 func (r *dryRun) money(record map[string]any, keys ...string) int64 {
@@ -388,6 +437,17 @@ func idSet(records []map[string]any) map[string]bool {
 		id := stringValue(record, "id")
 		if id != "" {
 			out[id] = true
+		}
+	}
+	return out
+}
+
+func recordByID(records []map[string]any) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	for _, record := range records {
+		id := stringValue(record, "id")
+		if id != "" {
+			out[id] = record
 		}
 	}
 	return out
