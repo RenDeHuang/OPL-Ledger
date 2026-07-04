@@ -137,6 +137,7 @@ Implemented:
 - Tencent reconciliation primitive with raw bill row normalization, workspace tag extraction, missing workspace fail-closed, and mixed-currency fail-closed behavior;
 - read-only Deployment evidence collector primitive with PostgreSQL persistence for redacted Kubernetes evidence snapshots;
 - service-to-service Bearer token authentication for mutating endpoints and admin Bearer token authorization for operator evidence reads when tokens are configured;
+- local-only shadow mode comparison procedure and safety rules;
 - React + TypeScript operator UI baseline.
 
 Not complete:

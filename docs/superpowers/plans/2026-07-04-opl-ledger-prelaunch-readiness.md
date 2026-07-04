@@ -298,8 +298,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `tools/compare-opl-cloud-ledger.md`
 - Create: `docs/prelaunch/shadow-mode.md`
 
-- [ ] Document local-only comparison between OPL Cloud state and OPL Ledger.
-- [ ] Do not call production by default.
+- [x] Document local-only comparison between OPL Cloud state and OPL Ledger.
+- [x] Do not call production by default.
 
 ### Task 28: Add Data Migration Dry-Run Plan
 
