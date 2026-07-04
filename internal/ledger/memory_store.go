@@ -10,10 +10,12 @@ import (
 )
 
 type MemoryStore struct {
-	mu                   sync.Mutex
-	entries              []Entry
-	bySourceEvent        map[string]Entry
-	byRequestFingerprint map[string]Entry
+	mu                    sync.Mutex
+	entries               []Entry
+	taskReceipts          []TaskReceipt
+	reconciliationReports []ReconciliationReport
+	bySourceEvent         map[string]Entry
+	byRequestFingerprint  map[string]Entry
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -174,6 +176,93 @@ func (s *MemoryStore) Summary(ctx context.Context, filter EntryFilter) (Summary,
 	return summary, nil
 }
 
+func (s *MemoryStore) AppendTaskReceipt(_ context.Context, input TaskReceiptInput) (TaskReceipt, error) {
+	if input.AccountID == "" {
+		return TaskReceipt{}, errors.New("task_evidence_account_required")
+	}
+	if input.TaskID == "" {
+		return TaskReceipt{}, errors.New("task_evidence_task_required")
+	}
+	if len(input.Plan) == 0 {
+		return TaskReceipt{}, errors.New("task_evidence_plan_required")
+	}
+	if len(input.Approval) == 0 {
+		return TaskReceipt{}, errors.New("task_evidence_approval_required")
+	}
+	if len(input.Environment) == 0 {
+		return TaskReceipt{}, errors.New("task_evidence_environment_required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	receipt := TaskReceipt{
+		ID:            randomID(),
+		Type:          "task.evidence.v1",
+		AccountID:     input.AccountID,
+		WorkspaceID:   input.WorkspaceID,
+		TaskID:        input.TaskID,
+		Actor:         mapOrDefault(input.Actor, map[string]any{"type": "system", "id": "opl-ledger"}),
+		Plan:          cloneMap(input.Plan),
+		Approval:      cloneMap(input.Approval),
+		Environment:   cloneMap(input.Environment),
+		InputRefs:     cloneMapSlice(input.InputRefs),
+		ExecutionRefs: cloneMapSlice(input.ExecutionRefs),
+		OutputRefs:    cloneMapSlice(input.OutputRefs),
+		ReviewResults: cloneMapSlice(input.ReviewResults),
+		Continuation:  cloneMap(input.Continuation),
+		Metadata:      cloneMap(input.Metadata),
+		CreatedAt:     time.Now().UTC(),
+	}
+	s.taskReceipts = append(s.taskReceipts, receipt)
+	return receipt, nil
+}
+
+func (s *MemoryStore) ListTaskReceipts(_ context.Context, filter TaskReceiptFilter) ([]TaskReceipt, error) {
+	if filter.AccountID == "" {
+		return nil, errors.New("task_evidence_account_required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []TaskReceipt
+	for _, receipt := range s.taskReceipts {
+		if receipt.AccountID != filter.AccountID {
+			continue
+		}
+		if filter.WorkspaceID != "" && receipt.WorkspaceID != filter.WorkspaceID {
+			continue
+		}
+		if filter.TaskID != "" && receipt.TaskID != filter.TaskID {
+			continue
+		}
+		out = append(out, receipt)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) AppendReconciliationReport(_ context.Context, report ReconciliationReport) (ReconciliationReport, error) {
+	if report.ID == "" {
+		report.ID = randomID()
+	}
+	if report.Provider == "" {
+		report.Provider = "manual"
+	}
+	if report.CreatedAt.IsZero() {
+		report.CreatedAt = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconciliationReports = append(s.reconciliationReports, report)
+	return report, nil
+}
+
+func (s *MemoryStore) LatestReconciliationReport(_ context.Context) (ReconciliationReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.reconciliationReports) == 0 {
+		return ReconciliationReport{}, errors.New("billing_reconciliation_report_missing")
+	}
+	return s.reconciliationReports[len(s.reconciliationReports)-1], nil
+}
+
 func matches(entry Entry, filter EntryFilter) bool {
 	if filter.AccountID != "" && entry.AccountID != filter.AccountID {
 		return false
@@ -197,6 +286,35 @@ func matches(entry Entry, filter EntryFilter) bool {
 		return false
 	}
 	return true
+}
+
+func mapOrDefault(value map[string]any, fallback map[string]any) map[string]any {
+	if len(value) == 0 {
+		return cloneMap(fallback)
+	}
+	return cloneMap(value)
+}
+
+func cloneMap(value map[string]any) map[string]any {
+	if value == nil {
+		return nil
+	}
+	out := make(map[string]any, len(value))
+	for key, item := range value {
+		out[key] = item
+	}
+	return out
+}
+
+func cloneMapSlice(value []map[string]any) []map[string]any {
+	if value == nil {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(value))
+	for _, item := range value {
+		out = append(out, cloneMap(item))
+	}
+	return out
 }
 
 func randomID() string {

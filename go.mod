@@ -5,6 +5,8 @@ go 1.22.0
 toolchain go1.22.2
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.0
+	github.com/lib/pq v1.10.9
 	k8s.io/api v0.30.0
 	k8s.io/apimachinery v0.30.0
 	k8s.io/client-go v0.30.0

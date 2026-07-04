@@ -194,6 +194,122 @@ func TestLedgerSummary(t *testing.T) {
 	}
 }
 
+func TestManualTopUpAPIAppendsCreditLedgerEntry(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/topups", bytes.NewReader([]byte(`{
+		"accountId":"acct_1",
+		"amountCents":25000,
+		"reason":"owner_credit",
+		"operatorUserId":"usr_admin"
+	}`))))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var entry ledger.Entry
+	if err := json.Unmarshal(rec.Body.Bytes(), &entry); err != nil {
+		t.Fatalf("decode topup response: %v", err)
+	}
+	if entry.EventType != "credit" || entry.AmountCents != 25000 || entry.SourceEventID != "owner_credit" {
+		t.Fatalf("unexpected topup entry: %+v", entry)
+	}
+}
+
+func TestRequestUsageAPIAppendsIdempotentRequestDebit(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"requestId":"req_1",
+		"provider":"openai",
+		"model":"gpt-5",
+		"inputTokens":1000,
+		"outputTokens":500,
+		"amountCents":25,
+		"sourceEventId":"gateway_req_1"
+	}`)
+	first := httptest.NewRecorder()
+	server.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/api/v1/billing/request-usage", bytes.NewReader(body)))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first request usage status = %d body=%s", first.Code, first.Body.String())
+	}
+	second := httptest.NewRecorder()
+	server.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/api/v1/billing/request-usage", bytes.NewReader(body)))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second request usage status = %d body=%s", second.Code, second.Body.String())
+	}
+	var firstEntry ledger.Entry
+	var secondEntry ledger.Entry
+	_ = json.Unmarshal(first.Body.Bytes(), &firstEntry)
+	_ = json.Unmarshal(second.Body.Bytes(), &secondEntry)
+	if firstEntry.ID != secondEntry.ID {
+		t.Fatalf("expected idempotent request usage entry, got %q and %q", firstEntry.ID, secondEntry.ID)
+	}
+	if firstEntry.EventType != "request_debit" || firstEntry.AmountCents != -25 {
+		t.Fatalf("unexpected request usage entry: %+v", firstEntry)
+	}
+}
+
+func TestTaskReceiptAPIPostsAndQueriesReceipts(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"accountId":"acct_1",
+		"workspaceId":"ws_1",
+		"taskId":"task_1",
+		"actor":{"type":"user","id":"usr_1"},
+		"plan":{"goal":"run analysis"},
+		"approval":{"status":"approved"},
+		"environment":{"runtimeProvider":"tencent-tke"},
+		"executionRefs":[{"type":"run","uri":"opl://run/1"}]
+	}`)
+	post := httptest.NewRecorder()
+	server.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/api/v1/ledger/task-receipts", bytes.NewReader(body)))
+	if post.Code != http.StatusCreated {
+		t.Fatalf("post receipt status = %d body=%s", post.Code, post.Body.String())
+	}
+
+	get := httptest.NewRecorder()
+	server.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/ledger/task-receipts?accountId=acct_1&workspaceId=ws_1&taskId=task_1", nil))
+	if get.Code != http.StatusOK {
+		t.Fatalf("get receipt status = %d body=%s", get.Code, get.Body.String())
+	}
+	var receipts []ledger.TaskReceipt
+	if err := json.Unmarshal(get.Body.Bytes(), &receipts); err != nil {
+		t.Fatalf("decode receipts: %v", err)
+	}
+	if len(receipts) != 1 || receipts[0].TaskID != "task_1" {
+		t.Fatalf("unexpected receipts: %+v", receipts)
+	}
+}
+
+func TestReconciliationAPIStoresLatestReport(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"provider":"tencent",
+		"markupRate":0.2,
+		"ledgerRows":[{"workspaceId":"ws_1","resourceType":"compute","amountCents":-1200}],
+		"tencentRows":[{"workspaceId":"ws_1","resourceType":"compute","amountCents":1000}]
+	}`)
+	post := httptest.NewRecorder()
+	server.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/api/v1/billing/reconciliation", bytes.NewReader(body)))
+	if post.Code != http.StatusCreated {
+		t.Fatalf("post reconciliation status = %d body=%s", post.Code, post.Body.String())
+	}
+	get := httptest.NewRecorder()
+	server.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/billing/reconciliation/latest", nil))
+	if get.Code != http.StatusOK {
+		t.Fatalf("get reconciliation status = %d body=%s", get.Code, get.Body.String())
+	}
+	var report ledger.ReconciliationReport
+	if err := json.Unmarshal(get.Body.Bytes(), &report); err != nil {
+		t.Fatalf("decode reconciliation report: %v", err)
+	}
+	if report.Provider != "tencent" || report.Status != "pass" {
+		t.Fatalf("unexpected reconciliation report: %+v", report)
+	}
+}
+
 type ledgerAppendResponse struct {
 	code  int
 	body  string

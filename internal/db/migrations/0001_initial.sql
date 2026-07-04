@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS ledger_entries (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,
   account_id TEXT,
   user_id TEXT,
@@ -24,7 +24,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ledger_entries_request_fingerprint_idx
   WHERE request_fingerprint IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS audit_events (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   actor_id TEXT,
   action TEXT NOT NULL,
   target_kind TEXT NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 
 CREATE TABLE IF NOT EXISTS evidence_records (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   evidence_type TEXT NOT NULL,
   account_id TEXT,
   workspace_id TEXT,
@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS evidence_records (
 );
 
 CREATE TABLE IF NOT EXISTS task_receipts (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  workspace_id TEXT,
   task_id TEXT NOT NULL,
   receipt_type TEXT NOT NULL,
   status TEXT NOT NULL,
@@ -52,7 +54,7 @@ CREATE TABLE IF NOT EXISTS task_receipts (
 );
 
 CREATE TABLE IF NOT EXISTS request_usage_logs (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   account_id TEXT,
   user_id TEXT,
   workspace_id TEXT,
@@ -64,7 +66,7 @@ CREATE TABLE IF NOT EXISTS request_usage_logs (
 );
 
 CREATE TABLE IF NOT EXISTS resource_usage_logs (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   account_id TEXT,
   workspace_id TEXT,
   compute_id TEXT,
@@ -77,31 +79,31 @@ CREATE TABLE IF NOT EXISTS resource_usage_logs (
 );
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   account_id TEXT,
   user_id TEXT,
   transaction_type TEXT NOT NULL,
   amount_cents BIGINT NOT NULL,
   currency TEXT NOT NULL DEFAULT 'CNY',
-  ledger_entry_id UUID REFERENCES ledger_entries(id),
+  ledger_entry_id TEXT REFERENCES ledger_entries(id),
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS manual_topups (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
   user_id TEXT,
   operator_id TEXT NOT NULL,
   amount_cents BIGINT NOT NULL,
   currency TEXT NOT NULL DEFAULT 'CNY',
-  audit_event_id UUID REFERENCES audit_events(id),
+  audit_event_id TEXT REFERENCES audit_events(id),
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS billing_reconciliation_reports (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,
   account_id TEXT,
   status TEXT NOT NULL,
@@ -115,12 +117,12 @@ CREATE TABLE IF NOT EXISTS billing_reconciliation_reports (
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   key TEXT PRIMARY KEY,
   operation TEXT NOT NULL,
-  result_id UUID NOT NULL,
+  result_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS kubernetes_evidence_snapshots (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   cluster_id TEXT NOT NULL,
   namespace TEXT NOT NULL,
   object_kind TEXT NOT NULL,
