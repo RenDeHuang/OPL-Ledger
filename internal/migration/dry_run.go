@@ -77,6 +77,7 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 	transactionPreview := r.mapWalletTransactions(walletTransactions)
 	topupPreview := r.mapManualTopups(manualTopups)
 	auditPreview := r.mapAuditEvents(auditEvents)
+	r.validateWallets(walletPreview)
 	r.validateManualTopups(topupPreview, ledgerPreview, transactionPreview, auditPreview)
 
 	if err := r.writePreview("wallets.preview.json", walletPreview); err != nil {
@@ -112,7 +113,7 @@ func (r *dryRun) mapWallets(records []map[string]any) []map[string]any {
 		frozen := r.money(record, "frozen_cents", "frozenCents", "frozen")
 		totalRecharged := r.money(record, "total_recharged_cents", "totalRechargedCents", "totalRecharged")
 		holds := mapValue(record, "holds")
-		out = append(out, map[string]any{
+		wallet := map[string]any{
 			"id":                    stableID("wallet", accountID),
 			"user_id":               userID,
 			"account_id":            accountID,
@@ -121,7 +122,11 @@ func (r *dryRun) mapWallets(records []map[string]any) []map[string]any {
 			"total_recharged_cents": totalRecharged,
 			"holds":                 holds,
 			"payload":               cloneMap(record),
-		})
+		}
+		if _, _, ok := lookup(record, "available_cents", "availableCents", "available"); ok {
+			wallet["available_cents"] = r.money(record, "available_cents", "availableCents", "available")
+		}
+		out = append(out, wallet)
 	}
 	return out
 }
@@ -266,6 +271,50 @@ func (r *dryRun) validateManualTopups(topups []map[string]any, ledgerEntries []m
 	}
 }
 
+func (r *dryRun) validateWallets(wallets []map[string]any) {
+	for _, wallet := range wallets {
+		balance := int64Value(wallet["balance_cents"])
+		frozen := int64Value(wallet["frozen_cents"])
+		totalRecharged := int64Value(wallet["total_recharged_cents"])
+		holdsTotal := r.holdsTotal(wallet)
+		if frozen != holdsTotal {
+			r.walletMismatch(fmt.Sprintf("wallet frozen does not equal holds total: account=%v frozen=%d holds=%d", wallet["account_id"], frozen, holdsTotal))
+		}
+		if available, ok := wallet["available_cents"]; ok {
+			expected := balance - frozen
+			if int64Value(available) != expected {
+				r.walletMismatch(fmt.Sprintf("wallet available mismatch: account=%v available=%v expected=%d", wallet["account_id"], available, expected))
+			}
+		}
+		if totalRecharged < balance {
+			r.walletMismatch(fmt.Sprintf("wallet total recharged below balance: account=%v total=%d balance=%d", wallet["account_id"], totalRecharged, balance))
+		}
+	}
+}
+
+func (r *dryRun) holdsTotal(wallet map[string]any) int64 {
+	holds, ok := wallet["holds"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	var total int64
+	for holdType, amount := range holds {
+		cents, err := moneyToCents(amount, false)
+		if err != nil {
+			r.mismatch(fmt.Sprintf("non-integer hold money value for %s: %v", holdType, amount))
+			r.block("non_integer_money_values")
+			continue
+		}
+		total += cents
+	}
+	return total
+}
+
+func (r *dryRun) walletMismatch(message string) {
+	r.mismatch(message)
+	r.block("wallet_snapshot_inconsistent")
+}
+
 func (r *dryRun) validateTopUpLedgerEntry(topup map[string]any, entry map[string]any) {
 	if fmt.Sprint(entry["event_type"]) != "credit" {
 		r.chainMismatch("manual topup ledger entry is not credit: " + fmt.Sprint(topup["id"]))
@@ -337,6 +386,22 @@ func moneyToCents(value any, alreadyCents bool) (int64, error) {
 		return 0, errors.New("money value must resolve to integer cents")
 	}
 	return int64(math.Round(cents)), nil
+}
+
+func int64Value(value any) int64 {
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case json.Number:
+		parsed, _ := v.Int64()
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func numberValue(value any) (float64, error) {

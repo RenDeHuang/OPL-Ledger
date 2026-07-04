@@ -192,6 +192,33 @@ func TestDryRunPreviewFailsOnInconsistentTopUpAccountingChain(t *testing.T) {
 	assertContains(t, report.BlockedReasons, "manual_topup_chain_inconsistent")
 }
 
+func TestDryRunPreviewFailsOnInconsistentWalletSnapshot(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{{
+		"id":             "usr_1",
+		"accountId":      "acct_1",
+		"balance":        200,
+		"frozen":         50,
+		"available":      160,
+		"holds":          map[string]any{"compute": 30},
+		"totalRecharged": 200,
+	}})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "fail" {
+		t.Fatalf("report status = %q", report.Status)
+	}
+	assertContains(t, report.BlockedReasons, "wallet_snapshot_inconsistent")
+}
+
 func writeJSONFile(t *testing.T, dir string, name string, value any) {
 	t.Helper()
 	payload, err := json.MarshalIndent(value, "", "  ")

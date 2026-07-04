@@ -98,6 +98,9 @@ Mapping:
 Validation:
 
 - `balance_cents - frozen_cents - sum(holds)` equals `availableCents`.
+- `frozen_cents` equals the sum of all hold amounts.
+- `availableCents`, when present in the source export, equals `balance_cents - frozen_cents`.
+- `total_recharged_cents` is not lower than `balance_cents`.
 - all money values are integer cents.
 
 ## Billing Ledger
