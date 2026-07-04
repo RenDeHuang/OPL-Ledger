@@ -10,6 +10,7 @@ import (
 	"time"
 
 	auditlog "github.com/RenDeHuang/OPL-Ledger/internal/audit"
+	evidencelog "github.com/RenDeHuang/OPL-Ledger/internal/evidence"
 	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
@@ -20,6 +21,8 @@ type Store interface {
 	RecordRequestUsage(context.Context, RequestUsageInput) (RequestUsageResult, error)
 	AppendAuditEvent(context.Context, AuditEventInput) (AuditEvent, error)
 	ListAuditEvents(context.Context, AuditEventFilter) ([]AuditEvent, error)
+	AppendEvidenceRecord(context.Context, EvidenceRecordInput) (EvidenceRecord, error)
+	ListEvidenceRecords(context.Context, EvidenceRecordFilter) ([]EvidenceRecord, error)
 	ListEntries(context.Context, EntryFilter) ([]Entry, error)
 	Summary(context.Context, EntryFilter) (Summary, error)
 	AppendTaskReceipt(context.Context, TaskReceiptInput) (TaskReceipt, error)
@@ -810,6 +813,50 @@ func (s *PostgresStore) ListAuditEvents(ctx context.Context, filter AuditEventFi
 	return scanAuditEvents(rows)
 }
 
+func (s *PostgresStore) AppendEvidenceRecord(ctx context.Context, input EvidenceRecordInput) (EvidenceRecord, error) {
+	record, err := evidencelog.NewRecord(input)
+	if err != nil {
+		return EvidenceRecord{}, err
+	}
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return EvidenceRecord{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO evidence_records (
+			id, evidence_type, account_id, workspace_id, source_event_id, payload, created_at
+		) VALUES (
+			$1, $2, $3, $4, NULLIF($5, ''), $6, $7
+		)`,
+		record.ID,
+		record.Type,
+		record.AccountID,
+		record.WorkspaceID,
+		record.SourceEventID,
+		payload,
+		record.CreatedAt,
+	)
+	if err != nil {
+		return EvidenceRecord{}, err
+	}
+	return record, nil
+}
+
+func (s *PostgresStore) ListEvidenceRecords(ctx context.Context, filter EvidenceRecordFilter) ([]EvidenceRecord, error) {
+	where, args := evidenceRecordWhere(filter)
+	query := `SELECT payload FROM evidence_records`
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEvidenceRecords(rows)
+}
+
 func (s *PostgresStore) entriesForIdempotencyKeys(ctx context.Context, tx *sql.Tx, input AppendEntryInput) ([]Entry, error) {
 	rows, err := tx.QueryContext(ctx, selectLedgerEntryColumns+` FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`, input.SourceEventID, input.RequestFingerprint)
 	if err != nil {
@@ -1320,6 +1367,23 @@ func auditEventWhere(filter AuditEventFilter) (string, []any) {
 	return strings.Join(clauses, " AND "), args
 }
 
+func evidenceRecordWhere(filter EvidenceRecordFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	add := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	add("account_id", filter.AccountID)
+	add("workspace_id", filter.WorkspaceID)
+	add("evidence_type", filter.Type)
+	add("source_event_id", filter.SourceEventID)
+	return strings.Join(clauses, " AND "), args
+}
+
 func scanEntries(rows *sql.Rows) ([]Entry, error) {
 	var entries []Entry
 	for rows.Next() {
@@ -1348,6 +1412,25 @@ func scanAuditEvents(rows *sql.Rows) ([]AuditEvent, error) {
 		return nil, err
 	}
 	return events, nil
+}
+
+func scanEvidenceRecords(rows *sql.Rows) ([]EvidenceRecord, error) {
+	var records []EvidenceRecord
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var record EvidenceRecord
+		if err := json.Unmarshal(payload, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return records, nil
 }
 
 type ledgerEntryScanner interface {

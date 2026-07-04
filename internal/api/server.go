@@ -40,6 +40,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/billing/reconciliation/latest", s.latestReconciliation)
 	s.mux.HandleFunc("POST /api/v1/audit/events", s.recordAuditEvent)
 	s.mux.HandleFunc("GET /api/v1/audit/events", s.listAuditEvents)
+	s.mux.HandleFunc("POST /api/v1/ledger/evidence-records", s.recordEvidenceRecord)
+	s.mux.HandleFunc("GET /api/v1/ledger/evidence-records", s.listEvidenceRecords)
 	s.mux.HandleFunc("POST /api/v1/ledger/task-receipts", s.recordTaskReceipt)
 	s.mux.HandleFunc("GET /api/v1/ledger/task-receipts", s.listTaskReceipts)
 }
@@ -187,6 +189,35 @@ func (s *Server) listAuditEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) recordEvidenceRecord(w http.ResponseWriter, r *http.Request) {
+	var input ledger.EvidenceRecordInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
+		return
+	}
+	record, err := s.store.AppendEvidenceRecord(r.Context(), input)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, record)
+}
+
+func (s *Server) listEvidenceRecords(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	records, err := s.store.ListEvidenceRecords(r.Context(), ledger.EvidenceRecordFilter{
+		AccountID:     q.Get("accountId"),
+		WorkspaceID:   q.Get("workspaceId"),
+		Type:          q.Get("type"),
+		SourceEventID: q.Get("sourceEventId"),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, records)
 }
 
 func (s *Server) listTaskReceipts(w http.ResponseWriter, r *http.Request) {

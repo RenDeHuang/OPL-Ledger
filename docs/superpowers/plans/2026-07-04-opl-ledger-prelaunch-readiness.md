@@ -228,8 +228,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/evidence/evidence.go`
 - Modify: `internal/api/server.go`
 
-- [ ] Test workspace lifecycle evidence records.
-- [ ] Test evidence does not appear in billing ledger.
+- [x] Test workspace lifecycle evidence records.
+- [x] Test evidence does not appear in billing ledger.
 
 ### Task 21: Complete Task Receipt Idempotency
 

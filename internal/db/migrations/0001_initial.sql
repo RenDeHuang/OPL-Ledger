@@ -41,9 +41,17 @@ CREATE TABLE IF NOT EXISTS evidence_records (
   evidence_type TEXT NOT NULL,
   account_id TEXT,
   workspace_id TEXT,
+  source_event_id TEXT,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS evidence_records_account_workspace_idx
+  ON evidence_records(account_id, workspace_id);
+
+CREATE INDEX IF NOT EXISTS evidence_records_source_event_idx
+  ON evidence_records(source_event_id)
+  WHERE source_event_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS task_receipts (
   id TEXT PRIMARY KEY,

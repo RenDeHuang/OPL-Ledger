@@ -315,6 +315,69 @@ func TestPostgresStoreRecordRequestUsageQuotaExceededRollsBackBeforeMutation(t *
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreAppendEvidenceRecordCreatesPersistentEvidenceRow(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+
+	mock.ExpectExec(`INSERT INTO evidence_records`).
+		WithArgs(sqlmock.AnyArg(), "workspace.created", "acct_1", "ws_1", "workspace_create_1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	record, err := store.AppendEvidenceRecord(context.Background(), EvidenceRecordInput{
+		Type:          "workspace.created",
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		SourceEventID: "workspace_create_1",
+		Plan:          map[string]any{"workspaceName": "Lab"},
+		Approval:      map[string]any{"status": "implicit_console_policy"},
+		Environment:   map[string]any{"runtimeProvider": "tencent-tke"},
+		ResourceRefs:  map[string]any{"serverId": "ins_1"},
+	})
+	if err != nil {
+		t.Fatalf("append evidence record: %v", err)
+	}
+	if record.ID == "" || record.Type != "workspace.created" || record.SourceEventID != "workspace_create_1" {
+		t.Fatalf("record = %+v", record)
+	}
+	assertSQLExpectations(t, mock)
+}
+
+func TestPostgresStoreListEvidenceRecordsFiltersByAccountWorkspaceTypeAndSourceEvent(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	record := EvidenceRecord{
+		ID:            "evd_1",
+		Type:          "workspace.created",
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		SourceEventID: "workspace_create_1",
+		Actor:         map[string]any{"type": "user", "id": "usr_1"},
+		Plan:          map[string]any{"workspaceName": "Lab"},
+		Approval:      map[string]any{"status": "implicit_console_policy"},
+		Environment:   map[string]any{"runtimeProvider": "tencent-tke"},
+		CreatedAt:     createdAt,
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT payload FROM evidence_records WHERE account_id = $1 AND workspace_id = $2 AND evidence_type = $3 AND source_event_id = $4 ORDER BY created_at, id`)).
+		WithArgs("acct_1", "ws_1", "workspace.created", "workspace_create_1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, record)))
+
+	records, err := store.ListEvidenceRecords(context.Background(), EvidenceRecordFilter{
+		AccountID:     "acct_1",
+		WorkspaceID:   "ws_1",
+		Type:          "workspace.created",
+		SourceEventID: "workspace_create_1",
+	})
+	if err != nil {
+		t.Fatalf("list evidence records: %v", err)
+	}
+	if len(records) != 1 || records[0].ID != "evd_1" {
+		t.Fatalf("records = %+v", records)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()

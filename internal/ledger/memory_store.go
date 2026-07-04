@@ -9,6 +9,7 @@ import (
 	"time"
 
 	auditlog "github.com/RenDeHuang/OPL-Ledger/internal/audit"
+	evidencelog "github.com/RenDeHuang/OPL-Ledger/internal/evidence"
 	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
@@ -21,6 +22,7 @@ type MemoryStore struct {
 	manualTopUps          []ManualTopUp
 	requestUsageLogs      []RequestUsageLog
 	auditEvents           []AuditEvent
+	evidenceRecords       []EvidenceRecord
 	taskReceipts          []TaskReceipt
 	reconciliationReports []ReconciliationReport
 	bySourceEvent         map[string]Entry
@@ -449,6 +451,29 @@ func (s *MemoryStore) ListAuditEvents(_ context.Context, filter AuditEventFilter
 	for _, event := range s.auditEvents {
 		if auditlog.Matches(event, filter) {
 			out = append(out, cloneAuditEvent(event))
+		}
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) AppendEvidenceRecord(_ context.Context, input EvidenceRecordInput) (EvidenceRecord, error) {
+	record, err := evidencelog.NewRecord(input)
+	if err != nil {
+		return EvidenceRecord{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.evidenceRecords = append(s.evidenceRecords, record)
+	return record, nil
+}
+
+func (s *MemoryStore) ListEvidenceRecords(_ context.Context, filter EvidenceRecordFilter) ([]EvidenceRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []EvidenceRecord
+	for _, record := range s.evidenceRecords {
+		if evidencelog.Matches(record, filter) {
+			out = append(out, evidencelog.CloneRecord(record))
 		}
 	}
 	return out, nil

@@ -129,6 +129,7 @@ Implemented:
 - hourly compute/storage settlement calculation with available-balance-first debit, hold capture, hold-exhaustion intents, idempotent replay input, and no-negative-balance behavior;
 - resource usage log business shape for compute/storage usage with workspace/resource ids;
 - audit events append/list API backed by PostgreSQL and in-memory stores;
+- evidence records append/list API backed by PostgreSQL and in-memory stores; evidence records stay out of billing ledger entries;
 - task receipt record/query;
 - reconciliation submit/latest;
 - Tencent reconciliation primitive;
@@ -143,7 +144,6 @@ Not complete:
 - settlement API/PostgreSQL transaction wiring for compute/storage hourly billing;
 - resource usage log API/PostgreSQL transaction wiring;
 - reconciliation guard API;
-- evidence records API for Workspace lifecycle and storage backup;
 - persisted Kubernetes evidence snapshots;
 - service-to-service auth;
 - Console/Fabric integration;

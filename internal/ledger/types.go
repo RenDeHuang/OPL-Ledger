@@ -5,6 +5,7 @@ import (
 	"time"
 
 	auditlog "github.com/RenDeHuang/OPL-Ledger/internal/audit"
+	evidencelog "github.com/RenDeHuang/OPL-Ledger/internal/evidence"
 	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
@@ -154,6 +155,10 @@ type ManualTopUp struct {
 type AuditEvent = auditlog.Event
 type AuditEventInput = auditlog.EventInput
 type AuditEventFilter = auditlog.EventFilter
+
+type EvidenceRecord = evidencelog.Record
+type EvidenceRecordInput = evidencelog.RecordInput
+type EvidenceRecordFilter = evidencelog.RecordFilter
 
 type RequestUsageInput struct {
 	AccountID          string              `json:"accountId,omitempty"`

@@ -207,6 +207,99 @@ Response:
 ]
 ```
 
+### `POST /api/v1/ledger/evidence-records`
+
+Purpose: append control-plane evidence receipts for Workspace lifecycle, storage backup/restore, access token, and other non-billing provenance events.
+
+Source behavior: `/home/dev/medopl-3/packages/console/src/services/ledger-evidence-service.js#recordEvidence`.
+
+Idempotency: `sourceEventId` is persisted and queryable for shadow-mode comparison. Exact replay conflict prevention is still planned at the persistence constraint level.
+
+Request:
+
+```json
+{
+  "type": "workspace.created",
+  "accountId": "acct_1",
+  "workspaceId": "ws_1",
+  "sourceEventId": "workspace_create_1",
+  "actor": {"type": "user", "id": "usr_1"},
+  "plan": {
+    "workspaceName": "Lab",
+    "packageId": "basic",
+    "computeProfile": "basic",
+    "storageGb": 50
+  },
+  "approval": {"status": "implicit_console_policy"},
+  "environment": {
+    "runtimeProvider": "tencent-tke",
+    "workspaceImage": "opl/workspace:latest"
+  },
+  "resourceRefs": {
+    "serverId": "ins_1",
+    "storageId": "disk_1"
+  },
+  "billingRefs": [
+    {"id": "hold_1", "type": "compute_hold", "amountCents": 1200, "currency": "CNY"}
+  ],
+  "continuation": {"type": "open_workspace_url"}
+}
+```
+
+Response:
+
+```json
+{
+  "id": "evd_...",
+  "type": "workspace.created",
+  "accountId": "acct_1",
+  "workspaceId": "ws_1",
+  "sourceEventId": "workspace_create_1",
+  "actor": {},
+  "plan": {},
+  "approval": {},
+  "environment": {},
+  "resourceRefs": {},
+  "billingRefs": [],
+  "inputRefs": [],
+  "executionRefs": [],
+  "outputRefs": [],
+  "reviewResults": [],
+  "createdAt": "2026-07-04T12:00:00Z"
+}
+```
+
+Persistence requirements:
+
+- `type`, `accountId`, `workspaceId`, `plan`, `approval`, and `environment` are required.
+- `evidence_records` stores the full evidence receipt payload plus queryable account, workspace, type, source event, and timestamp fields.
+- Evidence records do not create `ledger_entries` rows and therefore do not affect billing balances.
+- PostgreSQL and in-memory stores support the same append path.
+
+### `GET /api/v1/ledger/evidence-records`
+
+Purpose: list evidence receipts for Console/Fabric shadow-mode comparison and operator review.
+
+Filters: `accountId`, `workspaceId`, `type`, `sourceEventId`.
+
+Response:
+
+```json
+[
+  {
+    "id": "evd_...",
+    "type": "workspace.created",
+    "accountId": "acct_1",
+    "workspaceId": "ws_1",
+    "sourceEventId": "workspace_create_1",
+    "plan": {},
+    "approval": {},
+    "environment": {},
+    "createdAt": "2026-07-04T12:00:00Z"
+  }
+]
+```
+
 ## Planned
 
 - Wallet read API.
@@ -215,5 +308,4 @@ Response:
 - Hourly settlement API. Core compute/storage debit calculation, available-balance-first charging, hold capture, hold-exhaustion intents, and no-negative-balance rules are implemented locally; API/PostgreSQL transaction wiring is still planned.
 - Resource usage log API/store wiring. Compute and storage resource usage log shapes are implemented locally with workspace/resource ids.
 - Reconciliation guard API.
-- Evidence record append/list API.
 - Kubernetes evidence snapshot API.
