@@ -662,6 +662,80 @@ func TestDryRunPreviewFailsWhenWalletMovingLedgerHasNoWalletTransaction(t *testi
 	assertContains(t, report.BlockedReasons, "wallet_moving_ledger_missing_transaction")
 }
 
+func TestDryRunPreviewWritesWalletTransactionBackfillCandidates(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageDedup.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "resourceUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{{
+		"id":            "wtx_existing",
+		"accountId":     "acct_1",
+		"workspaceId":   "ws_1",
+		"type":          "debit",
+		"amountCents":   -25,
+		"sourceEventId": "gateway_request:req_1",
+		"ledgerEntryId": "led_existing",
+	}})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{
+		{
+			"id":            "led_existing",
+			"type":          "request_debit",
+			"accountId":     "acct_1",
+			"userId":        "usr_1",
+			"workspaceId":   "ws_1",
+			"sourceEventId": "gateway_request:req_1",
+			"amountCents":   -25,
+			"currency":      "CNY",
+		},
+		{
+			"id":            "led_hold_1",
+			"type":          "compute_hold",
+			"accountId":     "acct_1",
+			"userId":        "usr_1",
+			"workspaceId":   "ws_1",
+			"computeId":     "compute_1",
+			"sourceEventId": "compute_resource:compute_1:created",
+			"amountCents":   500,
+			"currency":      "CNY",
+		},
+	})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "fail" {
+		t.Fatalf("report status = %q", report.Status)
+	}
+	assertContains(t, report.BlockedReasons, "wallet_moving_ledger_missing_transaction")
+	if report.RowCounts["wallet_transactions.backfill.preview.json"] != 1 {
+		t.Fatalf("row counts = %+v", report.RowCounts)
+	}
+	candidates := readJSONArray(t, outputDir, "wallet_transactions.backfill.preview.json")
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %+v", candidates)
+	}
+	candidate := candidates[0]
+	if candidate["id"] != "wtx_backfill_led_hold_1" ||
+		candidate["ledger_entry_id"] != "led_hold_1" ||
+		candidate["transaction_type"] != "hold" ||
+		candidate["amount_cents"] != float64(500) ||
+		candidate["source_event_id"] != "compute_resource:compute_1:created" {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+	payload := candidate["payload"].(map[string]any)
+	if payload["backfillCandidate"] != true {
+		t.Fatalf("candidate payload = %+v", payload)
+	}
+	if payload["event_type"] != "compute_hold" {
+		t.Fatalf("candidate payload = %+v", payload)
+	}
+}
+
 func writeJSONFile(t *testing.T, dir string, name string, value any) {
 	t.Helper()
 	payload, err := json.MarshalIndent(value, "", "  ")

@@ -88,6 +88,7 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 	walletPreview := r.mapWallets(users)
 	ledgerPreview := r.mapLedgerEntries(ledgerEntries)
 	transactionPreview := r.mapWalletTransactions(walletTransactions)
+	transactionBackfillPreview := r.mapWalletTransactionBackfillCandidates(ledgerPreview, transactionPreview)
 	topupPreview := r.mapManualTopups(manualTopups)
 	requestUsagePreview := r.mapRequestUsageLogs(requestUsageLogs)
 	requestUsageDedupPreview := r.mapRequestUsageDedup(requestUsageDedup)
@@ -107,6 +108,9 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 		return Report{}, err
 	}
 	if err := r.writePreview("wallet_transactions.preview.json", transactionPreview); err != nil {
+		return Report{}, err
+	}
+	if err := r.writePreview("wallet_transactions.backfill.preview.json", transactionBackfillPreview); err != nil {
 		return Report{}, err
 	}
 	if err := r.writePreview("manual_topups.preview.json", topupPreview); err != nil {
@@ -205,6 +209,41 @@ func (r *dryRun) mapWalletTransactions(records []map[string]any) []map[string]an
 			"frozen_after_cents":    frozenAfter,
 			"available_after_cents": balanceAfter - frozenAfter,
 			"payload":               cloneMap(record),
+		})
+	}
+	return out
+}
+
+func (r *dryRun) mapWalletTransactionBackfillCandidates(ledgerEntries []map[string]any, walletTransactions []map[string]any) []map[string]any {
+	transactionsByLedgerID := recordsByField(walletTransactions, "ledger_entry_id")
+	out := []map[string]any{}
+	for _, entry := range ledgerEntries {
+		eventType := fmt.Sprint(entry["event_type"])
+		if !ledgerEventMovesWallet(eventType) {
+			continue
+		}
+		ledgerID := fmt.Sprint(entry["id"])
+		if ledgerID == "" || len(transactionsByLedgerID[ledgerID]) > 0 {
+			continue
+		}
+		transactionType := walletTransactionTypeForLedgerEvent(eventType)
+		if transactionType == "" {
+			continue
+		}
+		payload := cloneMap(entry)
+		payload["backfillCandidate"] = true
+		out = append(out, map[string]any{
+			"id":               "wtx_backfill_" + ledgerID,
+			"account_id":       stringValue(entry, "account_id"),
+			"user_id":          stringValue(entry, "user_id"),
+			"workspace_id":     stringValue(entry, "workspace_id"),
+			"transaction_type": transactionType,
+			"amount_cents":     int64Value(entry["amount_cents"]),
+			"currency":         defaultString(stringValue(entry, "currency"), "CNY"),
+			"source_event_id":  stringValue(entry, "source_event_id"),
+			"ledger_entry_id":  ledgerID,
+			"funding_source":   fundingSourceFromLedgerEntry(entry),
+			"payload":          payload,
 		})
 	}
 	return out
@@ -456,6 +495,34 @@ func walletTransactionTypeMatchesLedger(transactionType string, eventType string
 	default:
 		return false
 	}
+}
+
+func walletTransactionTypeForLedgerEvent(eventType string) string {
+	switch {
+	case walletTransactionTypeMatchesLedger("credit", eventType):
+		return "credit"
+	case walletTransactionTypeMatchesLedger("hold", eventType):
+		return "hold"
+	case walletTransactionTypeMatchesLedger("hold_release", eventType):
+		return "hold_release"
+	case walletTransactionTypeMatchesLedger("debit", eventType):
+		return "debit"
+	case walletTransactionTypeMatchesLedger("adjustment", eventType):
+		return "adjustment"
+	default:
+		return ""
+	}
+}
+
+func fundingSourceFromLedgerEntry(entry map[string]any) string {
+	if fundingSource := stringValue(entry, "funding_source"); fundingSource != "" {
+		return fundingSource
+	}
+	payload, ok := entry["payload"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return stringValue(payload, "fundingSource", "funding_source")
 }
 
 func (r *dryRun) validateRequestUsageDedup(logs []map[string]any, dedupRows []map[string]any) {

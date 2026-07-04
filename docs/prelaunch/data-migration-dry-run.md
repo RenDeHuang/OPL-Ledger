@@ -46,6 +46,7 @@ The dry run must produce:
 - `wallets.preview.json`
 - `ledger_entries.preview.json`
 - `wallet_transactions.preview.json`
+- `wallet_transactions.backfill.preview.json`
 - `manual_topups.preview.json`
 - `request_usage_logs.preview.json`
 - `request_usage_dedup.preview.json`
@@ -81,6 +82,7 @@ Current executable coverage:
 - `wallets.preview.json`
 - `ledger_entries.preview.json`
 - `wallet_transactions.preview.json`
+- `wallet_transactions.backfill.preview.json`
 - `manual_topups.preview.json`
 - `request_usage_logs.preview.json`
 - `request_usage_dedup.preview.json`
@@ -104,6 +106,7 @@ Current row counts from that local snapshot:
 - `wallets.preview.json`: 3
 - `ledger_entries.preview.json`: 6
 - `wallet_transactions.preview.json`: 1
+- `wallet_transactions.backfill.preview.json`: 5
 - `manual_topups.preview.json`: 1
 - `request_usage_logs.preview.json`: 0
 - `request_usage_dedup.preview.json`: 0
@@ -210,6 +213,24 @@ Mapping:
 - `fundingSource`
 - before/after balance and frozen fields
 - full source transaction -> `payload`
+
+Backfill candidate preview:
+
+- `wallet_transactions.backfill.preview.json` is local-only and review-only.
+- It is generated for wallet-moving ledger entries that do not have a linked
+  wallet transaction in the source export.
+- Candidate ids are deterministic: `wtx_backfill_<ledger_entry_id>`.
+- Candidate `transaction_type` is derived from the ledger event family:
+  `credit`, `*_hold`, `*_hold_released`, `request_debit`, `*_debit`, or
+  adjustment events.
+- Candidate `payload.backfillCandidate` is always `true` and contains the
+  ledger preview payload for reviewer context.
+- This preview does not clear the
+  `wallet_moving_ledger_missing_transaction` blocker. The source export,
+  approved normalization step, or reviewed migration script must still create
+  real wallet transactions before cutover.
+- Candidates derived from rows already blocked by `non_integer_money_values`
+  must not be applied without an explicit cents normalization decision.
 
 Validation:
 
