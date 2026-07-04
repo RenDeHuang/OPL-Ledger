@@ -117,6 +117,66 @@ func TestSettleWorkspaceUsageNeverDebitsBelowBalance(t *testing.T) {
 	}
 }
 
+func TestSettleWorkspaceUsageReturnsComputeAutoStopIntentWhenComputeHoldExhausted(t *testing.T) {
+	w := wallet.Wallet{
+		UserID:       "usr_1",
+		AccountID:    "acct_1",
+		BalanceCents: 1000,
+		Holds:        map[string]int64{"compute": 700},
+	}
+
+	result, err := SettleWorkspaceUsage(SettlementInput{
+		Wallet:             w,
+		AccountID:          "acct_1",
+		UserID:             "usr_1",
+		WorkspaceID:        "ws_1",
+		ComputeID:          "compute_1",
+		SourceEventID:      "billing_tick_1",
+		Hours:              1,
+		ComputeActive:      true,
+		ComputeHourlyCents: 1000,
+	})
+	if err != nil {
+		t.Fatalf("settle workspace usage: %v", err)
+	}
+	if len(result.Intents) != 1 {
+		t.Fatalf("intents = %+v", result.Intents)
+	}
+	if result.Intents[0].Type != IntentComputeAutoStopped || result.Intents[0].ComputeID != "compute_1" {
+		t.Fatalf("compute intent = %+v", result.Intents[0])
+	}
+}
+
+func TestSettleWorkspaceUsageReturnsStorageHoldExhaustedIntentWhenStorageUnpaid(t *testing.T) {
+	w := wallet.Wallet{
+		UserID:       "usr_1",
+		AccountID:    "acct_1",
+		BalanceCents: 100,
+		Holds:        map[string]int64{"storage": 50},
+	}
+
+	result, err := SettleWorkspaceUsage(SettlementInput{
+		Wallet:             w,
+		AccountID:          "acct_1",
+		UserID:             "usr_1",
+		WorkspaceID:        "ws_1",
+		StorageID:          "storage_1",
+		SourceEventID:      "billing_tick_1",
+		Hours:              1,
+		StorageActive:      true,
+		StorageHourlyCents: 200,
+	})
+	if err != nil {
+		t.Fatalf("settle workspace usage: %v", err)
+	}
+	if len(result.Intents) != 1 {
+		t.Fatalf("intents = %+v", result.Intents)
+	}
+	if result.Intents[0].Type != IntentStorageHoldExhausted || result.Intents[0].StorageID != "storage_1" {
+		t.Fatalf("storage intent = %+v", result.Intents[0])
+	}
+}
+
 func TestSettleWorkspaceUsageReturnsExistingEntriesForReplay(t *testing.T) {
 	existing := []SettlementEntry{{
 		ID:            "led_1",

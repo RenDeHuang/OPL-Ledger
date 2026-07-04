@@ -189,8 +189,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `internal/billing/settlement_test.go`
 - Modify: `internal/billing/settlement.go`
 
-- [ ] Test compute hold exhaustion returns `compute_auto_stopped` action intent.
-- [ ] Test storage hold exhaustion returns `storage_hold_exhausted` state intent.
+- [x] Test compute hold exhaustion returns `compute_auto_stopped` action intent.
+- [x] Test storage hold exhaustion returns `storage_hold_exhausted` state intent.
 
 ### Task 17: Implement Hold Release
 

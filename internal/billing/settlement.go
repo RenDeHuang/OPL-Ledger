@@ -37,8 +37,26 @@ type SettlementResult struct {
 	Wallet       wallet.Snapshot      `json:"wallet"`
 	Entries      []SettlementEntry    `json:"entries"`
 	Transactions []wallet.Transaction `json:"transactions"`
+	Intents      []SettlementIntent   `json:"intents,omitempty"`
 	UnpaidCents  int64                `json:"unpaidCents"`
 	Created      bool                 `json:"created"`
+}
+
+type SettlementIntentType string
+
+const (
+	IntentComputeAutoStopped   SettlementIntentType = "compute_auto_stopped"
+	IntentStorageHoldExhausted SettlementIntentType = "storage_hold_exhausted"
+)
+
+type SettlementIntent struct {
+	Type          SettlementIntentType `json:"type"`
+	AccountID     string               `json:"accountId,omitempty"`
+	WorkspaceID   string               `json:"workspaceId,omitempty"`
+	ComputeID     string               `json:"computeId,omitempty"`
+	StorageID     string               `json:"storageId,omitempty"`
+	SourceEventID string               `json:"sourceEventId,omitempty"`
+	Reason        string               `json:"reason,omitempty"`
 }
 
 type SettlementEntry struct {
@@ -78,6 +96,7 @@ func SettleWorkspaceUsage(input SettlementInput) (SettlementResult, error) {
 	}
 	var entries []SettlementEntry
 	var transactions []wallet.Transaction
+	var intents []SettlementIntent
 	var unpaid int64
 	if input.ComputeActive {
 		requested := input.ComputeHourlyCents * input.Hours
@@ -95,6 +114,16 @@ func SettleWorkspaceUsage(input SettlementInput) (SettlementResult, error) {
 		entries = append(entries, result.entries...)
 		transactions = append(transactions, result.transactions...)
 		unpaid += result.unpaidCents
+		if result.exhaustedHold {
+			intents = append(intents, SettlementIntent{
+				Type:          IntentComputeAutoStopped,
+				AccountID:     input.AccountID,
+				WorkspaceID:   input.WorkspaceID,
+				ComputeID:     input.ComputeID,
+				SourceEventID: input.SourceEventID,
+				Reason:        "compute_hold_exhausted",
+			})
+		}
 	}
 	if input.StorageActive {
 		requested := input.StorageHourlyCents * input.Hours
@@ -112,11 +141,22 @@ func SettleWorkspaceUsage(input SettlementInput) (SettlementResult, error) {
 		entries = append(entries, result.entries...)
 		transactions = append(transactions, result.transactions...)
 		unpaid += result.unpaidCents
+		if result.unpaidCents > 0 || result.exhaustedHold {
+			intents = append(intents, SettlementIntent{
+				Type:          IntentStorageHoldExhausted,
+				AccountID:     input.AccountID,
+				WorkspaceID:   input.WorkspaceID,
+				StorageID:     input.StorageID,
+				SourceEventID: input.SourceEventID,
+				Reason:        "storage_hold_exhausted",
+			})
+		}
 	}
 	return SettlementResult{
 		Wallet:       w.Snapshot(),
 		Entries:      entries,
 		Transactions: transactions,
+		Intents:      intents,
 		UnpaidCents:  unpaid,
 		Created:      true,
 	}, nil
@@ -135,9 +175,10 @@ type settleChargeInput struct {
 }
 
 type settleChargeResult struct {
-	entries      []SettlementEntry
-	transactions []wallet.Transaction
-	unpaidCents  int64
+	entries       []SettlementEntry
+	transactions  []wallet.Transaction
+	unpaidCents   int64
+	exhaustedHold bool
 }
 
 func settleCharge(w *wallet.Wallet, input settleChargeInput) settleChargeResult {
@@ -162,9 +203,10 @@ func settleCharge(w *wallet.Wallet, input settleChargeInput) settleChargeResult 
 		transactions = append(transactions, settlementTransaction(*w, before, after, entry, charge.HoldCents, createdAt))
 	}
 	return settleChargeResult{
-		entries:      entries,
-		transactions: transactions,
-		unpaidCents:  charge.UnpaidCents,
+		entries:       entries,
+		transactions:  transactions,
+		unpaidCents:   charge.UnpaidCents,
+		exhaustedHold: charge.ExhaustedHold,
 	}
 }
 
