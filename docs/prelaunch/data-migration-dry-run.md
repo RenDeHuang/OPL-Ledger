@@ -68,11 +68,12 @@ Current executable coverage:
 - `ledger_entries.preview.json`
 - `wallet_transactions.preview.json`
 - `manual_topups.preview.json`
+- `audit_events.preview.json`
 - `migration-report.json`
 
 The remaining preview files in this document are still required before final
 cutover approval; this first executable slice covers the manual top-up accounting
-loop and its wallet/ledger/transaction references.
+loop and its wallet/ledger/transaction/audit references.
 
 ## Wallets
 

@@ -78,7 +78,7 @@ func TestDryRunPreviewMapsWalletTopUpAccounting(t *testing.T) {
 	if report.Status != "pass" {
 		t.Fatalf("report status = %q mismatches=%+v blocked=%+v", report.Status, report.Mismatches, report.BlockedReasons)
 	}
-	if report.RowCounts["wallets.preview.json"] != 1 || report.RowCounts["manual_topups.preview.json"] != 1 {
+	if report.RowCounts["wallets.preview.json"] != 1 || report.RowCounts["manual_topups.preview.json"] != 1 || report.RowCounts["audit_events.preview.json"] != 1 {
 		t.Fatalf("row counts = %+v", report.RowCounts)
 	}
 
@@ -101,6 +101,10 @@ func TestDryRunPreviewMapsWalletTopUpAccounting(t *testing.T) {
 	transactions := readJSONArray(t, outputDir, "wallet_transactions.preview.json")
 	if transactions[0]["amount_cents"] != float64(20000) || transactions[0]["available_after_cents"] != float64(20000) {
 		t.Fatalf("wallet transaction preview = %+v", transactions[0])
+	}
+	auditEvents := readJSONArray(t, outputDir, "audit_events.preview.json")
+	if auditEvents[0]["action"] != "account.credit_granted" || auditEvents[0]["source_event_id"] != "topup_1" {
+		t.Fatalf("audit event preview = %+v", auditEvents[0])
 	}
 }
 

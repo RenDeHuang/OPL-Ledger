@@ -76,7 +76,8 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 	ledgerPreview := r.mapLedgerEntries(ledgerEntries)
 	transactionPreview := r.mapWalletTransactions(walletTransactions)
 	topupPreview := r.mapManualTopups(manualTopups)
-	r.validateManualTopups(topupPreview, ledgerPreview, transactionPreview, auditEvents)
+	auditPreview := r.mapAuditEvents(auditEvents)
+	r.validateManualTopups(topupPreview, ledgerPreview, transactionPreview, auditPreview)
 
 	if err := r.writePreview("wallets.preview.json", walletPreview); err != nil {
 		return Report{}, err
@@ -88,6 +89,9 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 		return Report{}, err
 	}
 	if err := r.writePreview("manual_topups.preview.json", topupPreview); err != nil {
+		return Report{}, err
+	}
+	if err := r.writePreview("audit_events.preview.json", auditPreview); err != nil {
 		return Report{}, err
 	}
 	if len(r.report.Mismatches) > 0 || len(r.report.BlockedReasons) > 0 {
@@ -200,6 +204,24 @@ func (r *dryRun) mapManualTopups(records []map[string]any) []map[string]any {
 			"wallet_transaction_id": stringValue(record, "walletTransactionId", "wallet_transaction_id"),
 			"audit_event_id":        stringValue(record, "auditEventId", "audit_event_id"),
 			"payload":               payload,
+		})
+	}
+	return out
+}
+
+func (r *dryRun) mapAuditEvents(records []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		out = append(out, map[string]any{
+			"id":              stringValue(record, "id"),
+			"account_id":      stringValue(record, "accountId", "account_id"),
+			"workspace_id":    stringValue(record, "workspaceId", "workspace_id"),
+			"actor_id":        stringValue(record, "actorId", "actor_id"),
+			"action":          stringValue(record, "action", "type"),
+			"target_kind":     stringValue(record, "targetKind", "target_kind"),
+			"target_id":       stringValue(record, "targetId", "target_id"),
+			"source_event_id": stringValue(record, "sourceEventId", "source_event_id"),
+			"payload":         cloneMap(record),
 		})
 	}
 	return out
