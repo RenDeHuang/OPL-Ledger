@@ -186,6 +186,99 @@ func TestDryRunPreviewReadsSingleOPLCloudStateFile(t *testing.T) {
 	}
 }
 
+func TestDryRunPreviewMapsRequestUsageAndDedup(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{{
+		"id":                   "usage_1",
+		"accountId":            "acct_1",
+		"userId":               "usr_1",
+		"workspaceId":          "ws_1",
+		"requestId":            "req_1",
+		"sourceEventId":        "gateway_request:req_1",
+		"requestFingerprint":   "fp_1",
+		"provider":             "openai",
+		"model":                "gpt-4.1-mini",
+		"inputTokens":          100,
+		"outputTokens":         20,
+		"amount":               0.25,
+		"requestedAmountCents": 25,
+		"unpaidCents":          0,
+		"currency":             "CNY",
+		"ledgerEntryId":        "led_req_1",
+	}})
+	writeJSONFile(t, inputDir, "requestUsageDedup.json", map[string]any{
+		"ws_1:req_1": map[string]any{
+			"id":                 "dedup_1",
+			"accountId":          "acct_1",
+			"userId":             "usr_1",
+			"workspaceId":        "ws_1",
+			"requestId":          "req_1",
+			"sourceEventId":      "gateway_request:req_1",
+			"requestFingerprint": "fp_1",
+			"usageLogId":         "usage_1",
+		},
+	})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "pass" {
+		t.Fatalf("report status = %q mismatches=%+v blocked=%+v", report.Status, report.Mismatches, report.BlockedReasons)
+	}
+	if report.RowCounts["request_usage_logs.preview.json"] != 1 || report.RowCounts["request_usage_dedup.preview.json"] != 1 {
+		t.Fatalf("row counts = %+v", report.RowCounts)
+	}
+	logs := readJSONArray(t, outputDir, "request_usage_logs.preview.json")
+	if logs[0]["amount_cents"] != float64(25) || logs[0]["request_fingerprint"] != "fp_1" || logs[0]["ledger_entry_id"] != "led_req_1" {
+		t.Fatalf("request usage preview = %+v", logs[0])
+	}
+	dedup := readJSONArray(t, outputDir, "request_usage_dedup.preview.json")
+	if dedup[0]["usage_log_id"] != "usage_1" || dedup[0]["workspace_id"] != "ws_1" {
+		t.Fatalf("request usage dedup preview = %+v", dedup[0])
+	}
+}
+
+func TestDryRunPreviewFailsOnInconsistentRequestUsageDedup(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{{
+		"id":                 "usage_1",
+		"workspaceId":        "ws_1",
+		"requestId":          "req_1",
+		"sourceEventId":      "gateway_request:req_1",
+		"requestFingerprint": "fp_1",
+	}})
+	writeJSONFile(t, inputDir, "requestUsageDedup.json", []map[string]any{{
+		"id":                 "dedup_1",
+		"workspaceId":        "ws_2",
+		"requestId":          "req_2",
+		"sourceEventId":      "gateway_request:req_2",
+		"requestFingerprint": "fp_2",
+		"usageLogId":         "usage_1",
+	}})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "fail" {
+		t.Fatalf("report status = %q", report.Status)
+	}
+	assertContains(t, report.BlockedReasons, "request_usage_dedup_inconsistent")
+}
+
 func TestDryRunPreviewFailsOnDuplicateTopUpSourceAndMissingReferences(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

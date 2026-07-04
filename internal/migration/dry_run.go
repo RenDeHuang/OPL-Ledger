@@ -68,6 +68,14 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	requestUsageLogs, err := r.readRecords("requestUsageLogs.json", "requestUsageLogs")
+	if err != nil {
+		return Report{}, err
+	}
+	requestUsageDedup, err := r.readRecords("requestUsageDedup.json", "requestUsageDedup")
+	if err != nil {
+		return Report{}, err
+	}
 	auditEvents, err := r.readRecords("audit.json", "audit")
 	if err != nil {
 		return Report{}, err
@@ -77,9 +85,12 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 	ledgerPreview := r.mapLedgerEntries(ledgerEntries)
 	transactionPreview := r.mapWalletTransactions(walletTransactions)
 	topupPreview := r.mapManualTopups(manualTopups)
+	requestUsagePreview := r.mapRequestUsageLogs(requestUsageLogs)
+	requestUsageDedupPreview := r.mapRequestUsageDedup(requestUsageDedup)
 	auditPreview := r.mapAuditEvents(auditEvents)
 	r.validateWallets(walletPreview)
 	r.validateManualTopups(topupPreview, ledgerPreview, transactionPreview, auditPreview)
+	r.validateRequestUsageDedup(requestUsagePreview, requestUsageDedupPreview)
 
 	if err := r.writePreview("wallets.preview.json", walletPreview); err != nil {
 		return Report{}, err
@@ -91,6 +102,12 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 		return Report{}, err
 	}
 	if err := r.writePreview("manual_topups.preview.json", topupPreview); err != nil {
+		return Report{}, err
+	}
+	if err := r.writePreview("request_usage_logs.preview.json", requestUsagePreview); err != nil {
+		return Report{}, err
+	}
+	if err := r.writePreview("request_usage_dedup.preview.json", requestUsageDedupPreview); err != nil {
 		return Report{}, err
 	}
 	if err := r.writePreview("audit_events.preview.json", auditPreview); err != nil {
@@ -215,6 +232,51 @@ func (r *dryRun) mapManualTopups(records []map[string]any) []map[string]any {
 	return out
 }
 
+func (r *dryRun) mapRequestUsageLogs(records []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		out = append(out, map[string]any{
+			"id":                     stringValue(record, "id"),
+			"account_id":             stringValue(record, "accountId", "account_id"),
+			"user_id":                stringValue(record, "userId", "user_id"),
+			"workspace_id":           stringValue(record, "workspaceId", "workspace_id"),
+			"request_id":             stringValue(record, "requestId", "request_id"),
+			"source_event_id":        stringValue(record, "sourceEventId", "source_event_id"),
+			"request_fingerprint":    stringValue(record, "requestFingerprint", "request_fingerprint"),
+			"provider":               stringValue(record, "provider"),
+			"model":                  stringValue(record, "model"),
+			"input_tokens":           int64Field(record, "inputTokens", "input_tokens"),
+			"output_tokens":          int64Field(record, "outputTokens", "output_tokens"),
+			"amount_cents":           r.money(record, "amount_cents", "amountCents", "amount"),
+			"requested_amount_cents": r.money(record, "requested_amount_cents", "requestedAmountCents", "requestedAmount"),
+			"unpaid_cents":           r.money(record, "unpaid_cents", "unpaidCents", "unpaid"),
+			"currency":               defaultString(stringValue(record, "currency"), "CNY"),
+			"ledger_entry_id":        stringValue(record, "ledgerEntryId", "ledger_entry_id"),
+			"units":                  defaultInt64(int64Field(record, "units"), 1),
+			"payload":                cloneMap(record),
+		})
+	}
+	return out
+}
+
+func (r *dryRun) mapRequestUsageDedup(records []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		out = append(out, map[string]any{
+			"id":                  stringValue(record, "id"),
+			"account_id":          stringValue(record, "accountId", "account_id"),
+			"user_id":             stringValue(record, "userId", "user_id"),
+			"workspace_id":        stringValue(record, "workspaceId", "workspace_id"),
+			"request_id":          stringValue(record, "requestId", "request_id"),
+			"source_event_id":     stringValue(record, "sourceEventId", "source_event_id"),
+			"request_fingerprint": stringValue(record, "requestFingerprint", "request_fingerprint"),
+			"usage_log_id":        stringValue(record, "usageLogId", "usage_log_id"),
+			"payload":             cloneMap(record),
+		})
+	}
+	return out
+}
+
 func (r *dryRun) mapAuditEvents(records []map[string]any) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
@@ -270,6 +332,38 @@ func (r *dryRun) validateManualTopups(topups []map[string]any, ledgerEntries []m
 			r.validateTopUpAuditEvent(topup, auditByID[id])
 		}
 	}
+}
+
+func (r *dryRun) validateRequestUsageDedup(logs []map[string]any, dedupRows []map[string]any) {
+	logByID := recordByID(logs)
+	for _, dedup := range dedupRows {
+		usageLogID := fmt.Sprint(dedup["usage_log_id"])
+		if usageLogID == "" {
+			r.requestUsageDedupMismatch("request usage dedup missing usage log id: " + fmt.Sprint(dedup["id"]))
+			continue
+		}
+		log, ok := logByID[usageLogID]
+		if !ok {
+			r.requestUsageDedupMismatch("request usage dedup references missing log: " + usageLogID)
+			continue
+		}
+		r.requireRequestUsageEqual("request usage dedup workspace mismatch", dedup, "workspace_id", log, "workspace_id")
+		r.requireRequestUsageEqual("request usage dedup request mismatch", dedup, "request_id", log, "request_id")
+		r.requireRequestUsageEqual("request usage dedup source mismatch", dedup, "source_event_id", log, "source_event_id")
+		r.requireRequestUsageEqual("request usage dedup fingerprint mismatch", dedup, "request_fingerprint", log, "request_fingerprint")
+	}
+}
+
+func (r *dryRun) requireRequestUsageEqual(message string, left map[string]any, leftKey string, right map[string]any, rightKey string) {
+	if fmt.Sprint(left[leftKey]) == fmt.Sprint(right[rightKey]) {
+		return
+	}
+	r.requestUsageDedupMismatch(fmt.Sprintf("%s: %s=%v %s=%v", message, leftKey, left[leftKey], rightKey, right[rightKey]))
+}
+
+func (r *dryRun) requestUsageDedupMismatch(message string) {
+	r.mismatch(message)
+	r.block("request_usage_dedup_inconsistent")
 }
 
 func (r *dryRun) validateWallets(wallets []map[string]any) {
@@ -403,6 +497,21 @@ func int64Value(value any) int64 {
 	default:
 		return 0
 	}
+}
+
+func int64Field(record map[string]any, keys ...string) int64 {
+	_, value, ok := lookup(record, keys...)
+	if !ok || value == nil {
+		return 0
+	}
+	return int64Value(value)
+}
+
+func defaultInt64(value int64, fallback int64) int64 {
+	if value == 0 {
+		return fallback
+	}
+	return value
 }
 
 func numberValue(value any) (float64, error) {

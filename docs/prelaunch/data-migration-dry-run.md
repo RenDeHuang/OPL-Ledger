@@ -82,12 +82,15 @@ Current executable coverage:
 - `ledger_entries.preview.json`
 - `wallet_transactions.preview.json`
 - `manual_topups.preview.json`
+- `request_usage_logs.preview.json`
+- `request_usage_dedup.preview.json`
 - `audit_events.preview.json`
 - `migration-report.json`
 
 The remaining preview files in this document are still required before final
-cutover approval; this first executable slice covers the manual top-up accounting
-loop and its wallet/ledger/transaction/audit references.
+cutover approval; this executable slice covers the manual top-up accounting loop
+and request usage replay inputs with their wallet/ledger/transaction/audit or
+dedup references.
 
 ## Wallets
 
@@ -244,6 +247,8 @@ Validation:
 
 - `requestFingerprint` is unique.
 - dedup rows resolve by `workspaceId + sourceEventId` and `workspaceId + requestId`.
+- every `request_usage_dedup.usage_log_id` resolves to a preview `request_usage_logs` row.
+- linked dedup and log rows agree on workspace id, request id, source event id, and request fingerprint.
 - quota rejections do not create wallet, ledger, usage, transaction, or audit rows.
 
 ## Resource Usage
