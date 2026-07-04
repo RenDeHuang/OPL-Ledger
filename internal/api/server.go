@@ -38,6 +38,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/billing/request-usage", s.recordRequestUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/reconciliation", s.recordReconciliation)
 	s.mux.HandleFunc("GET /api/v1/billing/reconciliation/latest", s.latestReconciliation)
+	s.mux.HandleFunc("POST /api/v1/audit/events", s.recordAuditEvent)
+	s.mux.HandleFunc("GET /api/v1/audit/events", s.listAuditEvents)
 	s.mux.HandleFunc("POST /api/v1/ledger/task-receipts", s.recordTaskReceipt)
 	s.mux.HandleFunc("GET /api/v1/ledger/task-receipts", s.listTaskReceipts)
 }
@@ -156,6 +158,35 @@ func (s *Server) recordTaskReceipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, receipt)
+}
+
+func (s *Server) recordAuditEvent(w http.ResponseWriter, r *http.Request) {
+	var input ledger.AuditEventInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
+		return
+	}
+	event, err := s.store.AppendAuditEvent(r.Context(), input)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, event)
+}
+
+func (s *Server) listAuditEvents(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	events, err := s.store.ListAuditEvents(r.Context(), ledger.AuditEventFilter{
+		AccountID:     q.Get("accountId"),
+		WorkspaceID:   q.Get("workspaceId"),
+		Action:        q.Get("action"),
+		SourceEventID: q.Get("sourceEventId"),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, events)
 }
 
 func (s *Server) listTaskReceipts(w http.ResponseWriter, r *http.Request) {

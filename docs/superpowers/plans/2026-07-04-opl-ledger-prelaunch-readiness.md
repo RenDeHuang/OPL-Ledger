@@ -218,8 +218,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/audit/audit.go`
 - Modify: `internal/api/server.go`
 
-- [ ] Test append audit event.
-- [ ] Test list by account, workspace, type, and source event.
+- [x] Test append audit event.
+- [x] Test list by account, workspace, type, and source event.
 
 ### Task 20: Implement Evidence Record Store
 

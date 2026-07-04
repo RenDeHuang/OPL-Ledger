@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	auditlog "github.com/RenDeHuang/OPL-Ledger/internal/audit"
 	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
@@ -150,18 +151,9 @@ type ManualTopUp struct {
 	CreatedAt           time.Time `json:"createdAt"`
 }
 
-type AuditEvent struct {
-	ID            string         `json:"id"`
-	AccountID     string         `json:"accountId,omitempty"`
-	WorkspaceID   string         `json:"workspaceId,omitempty"`
-	ActorID       string         `json:"actorId,omitempty"`
-	Action        string         `json:"action"`
-	TargetKind    string         `json:"targetKind"`
-	TargetID      string         `json:"targetId,omitempty"`
-	SourceEventID string         `json:"sourceEventId,omitempty"`
-	Payload       map[string]any `json:"payload,omitempty"`
-	CreatedAt     time.Time      `json:"createdAt"`
-}
+type AuditEvent = auditlog.Event
+type AuditEventInput = auditlog.EventInput
+type AuditEventFilter = auditlog.EventFilter
 
 type RequestUsageInput struct {
 	AccountID          string              `json:"accountId,omitempty"`

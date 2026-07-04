@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	auditlog "github.com/RenDeHuang/OPL-Ledger/internal/audit"
 	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
@@ -17,6 +18,8 @@ type Store interface {
 	AppendEntry(context.Context, AppendEntryInput) (AppendEntryResult, error)
 	ManualTopUp(context.Context, ManualTopUpInput) (ManualTopUpResult, error)
 	RecordRequestUsage(context.Context, RequestUsageInput) (RequestUsageResult, error)
+	AppendAuditEvent(context.Context, AuditEventInput) (AuditEvent, error)
+	ListAuditEvents(context.Context, AuditEventFilter) ([]AuditEvent, error)
 	ListEntries(context.Context, EntryFilter) ([]Entry, error)
 	Summary(context.Context, EntryFilter) (Summary, error)
 	AppendTaskReceipt(context.Context, TaskReceiptInput) (TaskReceipt, error)
@@ -760,6 +763,53 @@ func (s *PostgresStore) RecordRequestUsage(ctx context.Context, input RequestUsa
 	}, nil
 }
 
+func (s *PostgresStore) AppendAuditEvent(ctx context.Context, input AuditEventInput) (AuditEvent, error) {
+	event, err := auditlog.NewEvent(input)
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	payload, err := json.Marshal(event.Payload)
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO audit_events (
+			id, account_id, workspace_id, actor_id, action, target_kind, target_id, source_event_id, payload, created_at
+		) VALUES (
+			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9, $10
+		)`,
+		event.ID,
+		event.AccountID,
+		event.WorkspaceID,
+		event.ActorID,
+		event.Action,
+		event.TargetKind,
+		event.TargetID,
+		event.SourceEventID,
+		payload,
+		event.CreatedAt,
+	)
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	return event, nil
+}
+
+func (s *PostgresStore) ListAuditEvents(ctx context.Context, filter AuditEventFilter) ([]AuditEvent, error) {
+	where, args := auditEventWhere(filter)
+	query := selectAuditEventColumns + ` FROM audit_events`
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAuditEvents(rows)
+}
+
 func (s *PostgresStore) entriesForIdempotencyKeys(ctx context.Context, tx *sql.Tx, input AppendEntryInput) ([]Entry, error) {
 	rows, err := tx.QueryContext(ctx, selectLedgerEntryColumns+` FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`, input.SourceEventID, input.RequestFingerprint)
 	if err != nil {
@@ -1231,6 +1281,7 @@ func (s *PostgresStore) LatestReconciliationReport(ctx context.Context) (Reconci
 }
 
 const selectLedgerEntryColumns = `SELECT id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id, source_event_id, request_fingerprint, amount_cents, currency, created_at`
+const selectAuditEventColumns = `SELECT id, account_id, workspace_id, actor_id, action, target_kind, target_id, source_event_id, payload, created_at`
 
 func ledgerEntryWhere(filter EntryFilter) (string, []any) {
 	var clauses []string
@@ -1252,6 +1303,23 @@ func ledgerEntryWhere(filter EntryFilter) (string, []any) {
 	return strings.Join(clauses, " AND "), args
 }
 
+func auditEventWhere(filter AuditEventFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	add := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	add("account_id", filter.AccountID)
+	add("workspace_id", filter.WorkspaceID)
+	add("action", filter.Action)
+	add("source_event_id", filter.SourceEventID)
+	return strings.Join(clauses, " AND "), args
+}
+
 func scanEntries(rows *sql.Rows) ([]Entry, error) {
 	var entries []Entry
 	for rows.Next() {
@@ -1267,7 +1335,26 @@ func scanEntries(rows *sql.Rows) ([]Entry, error) {
 	return entries, nil
 }
 
+func scanAuditEvents(rows *sql.Rows) ([]AuditEvent, error) {
+	var events []AuditEvent
+	for rows.Next() {
+		event, err := scanAuditEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
 type ledgerEntryScanner interface {
+	Scan(dest ...any) error
+}
+
+type auditEventScanner interface {
 	Scan(dest ...any) error
 }
 
@@ -1308,6 +1395,42 @@ func scanEntry(scanner ledgerEntryScanner) (Entry, error) {
 	entry.SourceEventID = sourceEventID.String
 	entry.RequestFingerprint = requestFingerprint.String
 	return entry, nil
+}
+
+func scanAuditEvent(scanner auditEventScanner) (AuditEvent, error) {
+	var event AuditEvent
+	var accountID sql.NullString
+	var workspaceID sql.NullString
+	var actorID sql.NullString
+	var targetID sql.NullString
+	var sourceEventID sql.NullString
+	var payload []byte
+	err := scanner.Scan(
+		&event.ID,
+		&accountID,
+		&workspaceID,
+		&actorID,
+		&event.Action,
+		&event.TargetKind,
+		&targetID,
+		&sourceEventID,
+		&payload,
+		&event.CreatedAt,
+	)
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	event.AccountID = accountID.String
+	event.WorkspaceID = workspaceID.String
+	event.ActorID = actorID.String
+	event.TargetID = targetID.String
+	event.SourceEventID = sourceEventID.String
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &event.Payload); err != nil {
+			return AuditEvent{}, err
+		}
+	}
+	return event, nil
 }
 
 func nowUTC() time.Time {

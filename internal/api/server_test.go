@@ -439,6 +439,45 @@ func TestRequestUsageAPIQuotaExceededDoesNotMutateBillingState(t *testing.T) {
 	}
 }
 
+func TestAuditEventAPIPostsAndQueriesEvents(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"accountId":"acct_1",
+		"workspaceId":"ws_1",
+		"actorId":"usr_1",
+		"action":"billing.settled",
+		"targetKind":"workspace",
+		"targetId":"ws_1",
+		"sourceEventId":"billing_tick_1",
+		"payload":{"amountCents":47}
+	}`)
+	post := httptest.NewRecorder()
+	server.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/api/v1/audit/events", bytes.NewReader(body)))
+	if post.Code != http.StatusCreated {
+		t.Fatalf("post audit status = %d body=%s", post.Code, post.Body.String())
+	}
+	var event ledger.AuditEvent
+	if err := json.Unmarshal(post.Body.Bytes(), &event); err != nil {
+		t.Fatalf("decode audit event: %v", err)
+	}
+	if event.ID == "" || event.Action != "billing.settled" {
+		t.Fatalf("event = %+v", event)
+	}
+
+	get := httptest.NewRecorder()
+	server.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/audit/events?accountId=acct_1&workspaceId=ws_1&action=billing.settled&sourceEventId=billing_tick_1", nil))
+	if get.Code != http.StatusOK {
+		t.Fatalf("get audit status = %d body=%s", get.Code, get.Body.String())
+	}
+	var events []ledger.AuditEvent
+	if err := json.Unmarshal(get.Body.Bytes(), &events); err != nil {
+		t.Fatalf("decode audit events: %v", err)
+	}
+	if len(events) != 1 || events[0].ID != event.ID {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
 func TestTaskReceiptAPIPostsAndQueriesReceipts(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	body := []byte(`{

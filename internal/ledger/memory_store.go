@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	auditlog "github.com/RenDeHuang/OPL-Ledger/internal/audit"
 	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
@@ -427,6 +428,32 @@ func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageIn
 	return result, nil
 }
 
+func (s *MemoryStore) AppendAuditEvent(_ context.Context, input AuditEventInput) (AuditEvent, error) {
+	event, err := auditlog.NewEvent(input)
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.auditEvents = append(s.auditEvents, event)
+	if event.SourceEventID != "" {
+		s.auditBySourceEvent[event.SourceEventID] = event
+	}
+	return event, nil
+}
+
+func (s *MemoryStore) ListAuditEvents(_ context.Context, filter AuditEventFilter) ([]AuditEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []AuditEvent
+	for _, event := range s.auditEvents {
+		if auditlog.Matches(event, filter) {
+			out = append(out, cloneAuditEvent(event))
+		}
+	}
+	return out, nil
+}
+
 func sameReplayPayload(entry Entry, input AppendEntryInput) bool {
 	return entry.EventType == input.EventType &&
 		entry.AccountID == input.AccountID &&
@@ -637,6 +664,11 @@ func cloneMapSlice(value []map[string]any) []map[string]any {
 		out = append(out, cloneMap(item))
 	}
 	return out
+}
+
+func cloneAuditEvent(event AuditEvent) AuditEvent {
+	event.Payload = cloneMap(event.Payload)
+	return event
 }
 
 func randomID() string {

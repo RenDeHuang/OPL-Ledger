@@ -135,6 +135,78 @@ Persistence requirements:
 - `audit_events` records `billing.request_usage_recorded`.
 - PostgreSQL path performs these writes in one SQL transaction.
 
+### `POST /api/v1/audit/events`
+
+Purpose: append an audit event emitted by Console, Fabric, or Ledger-owned billing workflows.
+
+Source behavior: aligns with `medopl-3` audit/evidence trails used by billing and workspace lifecycle operations.
+
+Idempotency: `sourceEventId` identifies the source operation for later query and reconciliation. Exact replay conflict prevention is still planned at the persistence constraint level.
+
+Request:
+
+```json
+{
+  "accountId": "acct_1",
+  "userId": "usr_1",
+  "workspaceId": "ws_1",
+  "action": "workspace.created",
+  "targetKind": "workspace",
+  "targetId": "ws_1",
+  "sourceEventId": "console_workspace_create_1",
+  "payload": {
+    "provider": "tke"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "id": "audit_...",
+  "accountId": "acct_1",
+  "userId": "usr_1",
+  "workspaceId": "ws_1",
+  "action": "workspace.created",
+  "targetKind": "workspace",
+  "targetId": "ws_1",
+  "sourceEventId": "console_workspace_create_1",
+  "payload": {},
+  "createdAt": "2026-07-04T12:00:00Z"
+}
+```
+
+Persistence requirements:
+
+- `action` and `targetKind` are required.
+- `audit_events` records account, user, workspace, action, target, source event, payload, and timestamp.
+- PostgreSQL and in-memory stores support the same append path.
+
+### `GET /api/v1/audit/events`
+
+Purpose: list audit events for operator review, reconciliation, and shadow-mode comparison.
+
+Filters: `accountId`, `userId`, `workspaceId`, `action`, `sourceEventId`.
+
+Response:
+
+```json
+[
+  {
+    "id": "audit_...",
+    "accountId": "acct_1",
+    "workspaceId": "ws_1",
+    "action": "workspace.created",
+    "targetKind": "workspace",
+    "targetId": "ws_1",
+    "sourceEventId": "console_workspace_create_1",
+    "payload": {},
+    "createdAt": "2026-07-04T12:00:00Z"
+  }
+]
+```
+
 ## Planned
 
 - Wallet read API.
@@ -143,6 +215,5 @@ Persistence requirements:
 - Hourly settlement API. Core compute/storage debit calculation, available-balance-first charging, hold capture, hold-exhaustion intents, and no-negative-balance rules are implemented locally; API/PostgreSQL transaction wiring is still planned.
 - Resource usage log API/store wiring. Compute and storage resource usage log shapes are implemented locally with workspace/resource ids.
 - Reconciliation guard API.
-- Audit event append/list API.
 - Evidence record append/list API.
 - Kubernetes evidence snapshot API.
