@@ -22,6 +22,7 @@ type MemoryStore struct {
 	wallets               map[string]wallet.Wallet
 	walletTransactions    []wallet.Transaction
 	manualTopUps          []ManualTopUp
+	resourceUsageLogs     []usage.ResourceUsageLog
 	requestUsageLogs      []RequestUsageLog
 	auditEvents           []AuditEvent
 	evidenceRecords       []EvidenceRecord
@@ -593,6 +594,7 @@ func (s *MemoryStore) RecordResourceUsage(_ context.Context, input ResourceUsage
 	log := usage.NewResourceUsageLog(toUsageResourceInput(input))
 	result := ResourceUsageResult{Log: log, Created: true}
 	s.resourceUsageBySource[input.SourceEventID] = result
+	s.resourceUsageLogs = append(s.resourceUsageLogs, log)
 	return result, nil
 }
 
@@ -821,6 +823,18 @@ func (s *MemoryStore) ListRequestUsage(_ context.Context, filter RequestUsageFil
 	for _, log := range s.requestUsageLogs {
 		if matchesRequestUsageLog(log, filter) {
 			out = append(out, cloneRequestUsageLog(log))
+		}
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) ListResourceUsage(_ context.Context, filter ResourceUsageFilter) ([]usage.ResourceUsageLog, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]usage.ResourceUsageLog, 0, len(s.resourceUsageLogs))
+	for _, log := range s.resourceUsageLogs {
+		if matchesResourceUsageLog(log, filter) {
+			out = append(out, cloneResourceUsageLog(log))
 		}
 	}
 	return out, nil

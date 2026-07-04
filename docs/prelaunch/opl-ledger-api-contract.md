@@ -366,6 +366,25 @@ Persistence requirements:
 - `resource_usage_logs.source_event_id` is unique when present.
 - Resource usage records are evidence logs; settlement/debit writes remain in settlement and wallet transaction endpoints.
 
+### `GET /api/v1/billing/resource-usage`
+
+Purpose: list compute/storage resource usage evidence for Console billing history, operator review, shadow-mode comparison, and reconciliation.
+
+Status: implemented for in-memory and PostgreSQL stores.
+
+Authorization: operator evidence read; when `OPL_LEDGER_ADMIN_TOKEN` is configured, callers must send `Authorization: Bearer <admin-token>`.
+
+Filters:
+
+- `accountId`
+- `userId`
+- `workspaceId`
+- `computeId`
+- `storageId`
+- `attachmentId`
+- `resourceKind`: `compute` or `storage`
+- `sourceEventId`
+
 ### `POST /api/v1/ledger/entries`
 
 Purpose: append low-level ledger entry.

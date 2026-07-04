@@ -86,6 +86,15 @@ func TestAuthRejectsMissingAdminTokenForRequestUsageReads(t *testing.T) {
 	}
 }
 
+func TestAuthRejectsMissingAdminTokenForResourceUsageReads(t *testing.T) {
+	server := NewServerWithOptions(ledger.NewMemoryStore(), Options{Auth: auth.Config{AdminToken: "admin_1"}})
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/billing/resource-usage?accountId=acct_1", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAuthAdminTokenAllowsBillingTopUpReads(t *testing.T) {
 	store := ledger.NewMemoryStore()
 	if _, err := store.ManualTopUp(nil, ledger.ManualTopUpInput{

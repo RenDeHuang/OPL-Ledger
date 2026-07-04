@@ -133,6 +133,7 @@ Implemented:
 - compute/storage hold create/release API with wallet frozen/available updates, ledger entries, wallet transactions, idempotent replay, and PostgreSQL transaction wiring;
 - hourly compute/storage settlement API with available-balance-first debit, hold capture, hold-exhaustion intents, idempotent replay, no-negative-balance behavior, wallet transactions, and PostgreSQL transaction wiring;
 - resource usage log API with compute/storage/attachment/workspace ids, source-event idempotency, and PostgreSQL persistence;
+- resource usage list API with account/user/workspace/compute/storage/attachment/kind/source filters for Console/admin reads;
 - audit events append/list API backed by PostgreSQL and in-memory stores;
 - evidence records append/list API backed by PostgreSQL and in-memory stores; evidence records stay out of billing ledger entries;
 - task receipt record/query with PostgreSQL `accountId/workspaceId/taskId/sourceEventId` idempotency;

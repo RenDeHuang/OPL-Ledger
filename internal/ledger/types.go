@@ -283,6 +283,17 @@ type ResourceUsageResult struct {
 	Created bool                   `json:"created"`
 }
 
+type ResourceUsageFilter struct {
+	AccountID     string
+	UserID        string
+	WorkspaceID   string
+	ComputeID     string
+	StorageID     string
+	AttachmentID  string
+	ResourceKind  usage.ResourceKind
+	SourceEventID string
+}
+
 type WalletTransactionFilter struct {
 	AccountID     string
 	UserID        string
@@ -387,7 +398,7 @@ type RequestUsageFilter struct {
 	RequestID          string
 	SourceEventID      string
 	RequestFingerprint string
-	LedgerEntryID       string
+	LedgerEntryID      string
 	Provider           string
 	Model              string
 }

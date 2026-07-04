@@ -892,6 +892,37 @@ func TestResourceUsageAPIRecordsIdempotentComputeUsage(t *testing.T) {
 	}
 }
 
+func TestResourceUsageAPIListsUsageLogsForOperatorReview(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"computeId":"compute_1",
+		"resourceKind":"compute",
+		"quantity":1,
+		"unit":"hour",
+		"unitPriceCents":47,
+		"amountCents":47,
+		"sourceEventId":"resource_usage:compute_1:billing_tick_1"
+	}`)
+	first := postResourceUsage(t, server, body)
+	if first.code != http.StatusCreated {
+		t.Fatalf("first resource usage status = %d body=%s", first.code, first.body)
+	}
+
+	logs := getResourceUsageLogs(t, server, "/api/v1/billing/resource-usage?accountId=acct_1&workspaceId=ws_1&sourceEventId=resource_usage:compute_1:billing_tick_1")
+	if logs.code != http.StatusOK {
+		t.Fatalf("list resource usage status = %d body=%s", logs.code, logs.body)
+	}
+	if len(logs.logs) != 1 {
+		t.Fatalf("logs = %+v", logs.logs)
+	}
+	if logs.logs[0].ComputeID != "compute_1" || logs.logs[0].AmountCents != 47 || logs.logs[0].SourceEventID != "resource_usage:compute_1:billing_tick_1" {
+		t.Fatalf("resource usage log = %+v", logs.logs[0])
+	}
+}
+
 func TestWalletTransactionsAPIListsAndFiltersTransactions(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	topup := postManualTopUp(t, server, []byte(`{
@@ -1288,6 +1319,12 @@ type requestUsageLogsAPIResponse struct {
 	logs []ledger.RequestUsageLog
 }
 
+type resourceUsageLogsAPIResponse struct {
+	code int
+	body string
+	logs []usage.ResourceUsageLog
+}
+
 type walletTransactionsAPIResponse struct {
 	code         int
 	body         string
@@ -1341,6 +1378,19 @@ func getRequestUsageLogs(t *testing.T, server http.Handler, target string) reque
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.logs); err != nil {
 			t.Fatalf("decode request usage logs response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func getResourceUsageLogs(t *testing.T, server http.Handler, target string) resourceUsageLogsAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	response := resourceUsageLogsAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.logs); err != nil {
+			t.Fatalf("decode resource usage logs response: %v body=%s", err, rec.Body.String())
 		}
 	}
 	return response

@@ -645,6 +645,44 @@ func TestPostgresStoreListRequestUsageFiltersByAccountAndSource(t *testing.T) {
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreListResourceUsageFiltersByWorkspaceAndKind(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	log := usage.ResourceUsageLog{
+		ID:             "usage_res_1",
+		UserID:         "usr_1",
+		AccountID:      "acct_1",
+		WorkspaceID:    "ws_1",
+		ComputeID:      "compute_1",
+		ResourceKind:   usage.ResourceKindCompute,
+		Quantity:       1,
+		Unit:           "hour",
+		UnitPriceCents: 47,
+		AmountCents:    47,
+		RequestedCents: 47,
+		Currency:       "CNY",
+		SourceEventID:  "resource_usage:compute_1:billing_tick_1",
+		CreatedAt:      createdAt,
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT payload FROM resource_usage_logs WHERE workspace_id = $1 AND resource_kind = $2 ORDER BY created_at, id`)).
+		WithArgs("ws_1", "compute").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, log)))
+
+	logs, err := store.ListResourceUsage(context.Background(), ResourceUsageFilter{
+		WorkspaceID:  "ws_1",
+		ResourceKind: usage.ResourceKindCompute,
+	})
+	if err != nil {
+		t.Fatalf("list resource usage: %v", err)
+	}
+	if len(logs) != 1 || logs[0].ID != "usage_res_1" || logs[0].ResourceKind != usage.ResourceKindCompute {
+		t.Fatalf("logs = %+v", logs)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreListWalletsFiltersByAccountID(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

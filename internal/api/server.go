@@ -14,6 +14,7 @@ import (
 	"github.com/RenDeHuang/OPL-Ledger/internal/ledger"
 	"github.com/RenDeHuang/OPL-Ledger/internal/ownership"
 	"github.com/RenDeHuang/OPL-Ledger/internal/reconciliation"
+	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/version"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
@@ -66,6 +67,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/billing/holds/release", s.releaseHolds)
 	s.mux.HandleFunc("POST /api/v1/billing/settlements", s.settleWorkspaceUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/resource-usage", s.recordResourceUsage)
+	s.mux.HandleFunc("GET /api/v1/billing/resource-usage", s.listResourceUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/request-usage", s.recordRequestUsage)
 	s.mux.HandleFunc("GET /api/v1/billing/request-usage", s.listRequestUsage)
 	s.mux.HandleFunc("PUT /api/v1/billing/request-quotas", s.upsertRequestQuota)
@@ -172,6 +174,18 @@ func (s *Server) listRequestUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logs, err := s.store.ListRequestUsage(r.Context(), requestUsageFilterFromQuery(r))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, logs)
+}
+
+func (s *Server) listResourceUsage(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	logs, err := s.store.ListResourceUsage(r.Context(), resourceUsageFilterFromQuery(r))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -665,9 +679,23 @@ func requestUsageFilterFromQuery(r *http.Request) ledger.RequestUsageFilter {
 		RequestID:          q.Get("requestId"),
 		SourceEventID:      q.Get("sourceEventId"),
 		RequestFingerprint: q.Get("requestFingerprint"),
-		LedgerEntryID:       q.Get("ledgerEntryId"),
+		LedgerEntryID:      q.Get("ledgerEntryId"),
 		Provider:           q.Get("provider"),
 		Model:              q.Get("model"),
+	}
+}
+
+func resourceUsageFilterFromQuery(r *http.Request) ledger.ResourceUsageFilter {
+	q := r.URL.Query()
+	return ledger.ResourceUsageFilter{
+		AccountID:     q.Get("accountId"),
+		UserID:        q.Get("userId"),
+		WorkspaceID:   q.Get("workspaceId"),
+		ComputeID:     q.Get("computeId"),
+		StorageID:     q.Get("storageId"),
+		AttachmentID:  q.Get("attachmentId"),
+		ResourceKind:  usageResourceKind(q.Get("resourceKind")),
+		SourceEventID: q.Get("sourceEventId"),
 	}
 }
 
@@ -681,6 +709,10 @@ func walletFilterFromQuery(r *http.Request) ledger.WalletFilter {
 
 func walletTransactionType(value string) wallet.TransactionType {
 	return wallet.TransactionType(value)
+}
+
+func usageResourceKind(value string) usage.ResourceKind {
+	return usage.ResourceKind(value)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
