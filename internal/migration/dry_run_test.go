@@ -596,6 +596,67 @@ func TestDryRunPreviewReportsRecordIdentityForNonIntegerMoney(t *testing.T) {
 	assertMismatchContains(t, report.Mismatches, "record=usr_fractional")
 }
 
+func TestDryRunPreviewWritesMoneyNormalizationCandidates(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{{
+		"id":             "usr_fractional",
+		"accountId":      "acct_fractional",
+		"balance":        10.1234,
+		"frozen":         0,
+		"holds":          map[string]any{},
+		"totalRecharged": 20,
+	}})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{{
+		"id":          "led_fractional",
+		"type":        "request_debit",
+		"accountId":   "acct_fractional",
+		"amount":      -0.0033,
+		"currency":    "CNY",
+		"workspaceId": "ws_fractional",
+	}})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageDedup.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "resourceUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "fail" {
+		t.Fatalf("report status = %q", report.Status)
+	}
+	assertContains(t, report.BlockedReasons, "non_integer_money_values")
+	if report.RowCounts["money_normalization.preview.json"] != 2 {
+		t.Fatalf("row counts = %+v", report.RowCounts)
+	}
+	candidates := readJSONArray(t, outputDir, "money_normalization.preview.json")
+	if len(candidates) != 2 {
+		t.Fatalf("candidates = %+v", candidates)
+	}
+	walletCandidate := candidates[0]
+	if walletCandidate["record_id"] != "usr_fractional" ||
+		walletCandidate["field"] != "balance" ||
+		walletCandidate["original_value"] != "10.1234" ||
+		walletCandidate["round_cents"] != float64(1012) ||
+		walletCandidate["floor_cents"] != float64(1012) ||
+		walletCandidate["ceil_cents"] != float64(1013) {
+		t.Fatalf("wallet candidate = %+v", walletCandidate)
+	}
+	ledgerCandidate := candidates[1]
+	if ledgerCandidate["record_id"] != "led_fractional" ||
+		ledgerCandidate["field"] != "amount" ||
+		ledgerCandidate["original_value"] != "-0.0033" ||
+		ledgerCandidate["round_cents"] != float64(0) ||
+		ledgerCandidate["floor_cents"] != float64(-1) ||
+		ledgerCandidate["ceil_cents"] != float64(0) {
+		t.Fatalf("ledger candidate = %+v", ledgerCandidate)
+	}
+}
+
 func TestDryRunPreviewFailsOnInconsistentWalletTransactionLedgerLink(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

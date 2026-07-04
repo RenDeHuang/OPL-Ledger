@@ -23,10 +23,11 @@ type Report struct {
 }
 
 type dryRun struct {
-	inputDir  string
-	outputDir string
-	report    Report
-	state     map[string]any
+	inputDir                  string
+	outputDir                 string
+	report                    Report
+	state                     map[string]any
+	moneyNormalizationPreview []map[string]any
 }
 
 func RunDryRun(inputDir string, outputDir string) (Report, error) {
@@ -123,6 +124,9 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 		return Report{}, err
 	}
 	if err := r.writePreview("resource_usage_logs.preview.json", resourceUsagePreview); err != nil {
+		return Report{}, err
+	}
+	if err := r.writePreview("money_normalization.preview.json", r.moneyNormalizationPreview); err != nil {
 		return Report{}, err
 	}
 	if err := r.writePreview("audit_events.preview.json", auditPreview); err != nil {
@@ -769,9 +773,31 @@ func (r *dryRun) money(record map[string]any, keys ...string) int64 {
 	if err != nil {
 		r.mismatch(fmt.Sprintf("non-integer money value for %s: %v record=%s", key, value, recordIdentity(record)))
 		r.block("non_integer_money_values")
+		r.addMoneyNormalizationCandidate(record, key, value, centsKey)
 		return 0
 	}
 	return cents
+}
+
+func (r *dryRun) addMoneyNormalizationCandidate(record map[string]any, field string, value any, alreadyCents bool) {
+	number, err := numberValue(value)
+	if err != nil {
+		number = 0
+	}
+	cents := number
+	if !alreadyCents {
+		cents = number * 100
+	}
+	r.moneyNormalizationPreview = append(r.moneyNormalizationPreview, map[string]any{
+		"record_id":      recordIdentity(record),
+		"field":          field,
+		"original_value": fmt.Sprint(value),
+		"already_cents":  alreadyCents,
+		"round_cents":    int64(math.Round(cents)),
+		"floor_cents":    int64(math.Floor(cents)),
+		"ceil_cents":     int64(math.Ceil(cents)),
+		"payload":        cloneMap(record),
+	})
 }
 
 func moneyToCents(value any, alreadyCents bool) (int64, error) {

@@ -47,6 +47,7 @@ The dry run must produce:
 - `ledger_entries.preview.json`
 - `wallet_transactions.preview.json`
 - `wallet_transactions.backfill.preview.json`
+- `money_normalization.preview.json`
 - `manual_topups.preview.json`
 - `request_usage_logs.preview.json`
 - `request_usage_dedup.preview.json`
@@ -83,6 +84,7 @@ Current executable coverage:
 - `ledger_entries.preview.json`
 - `wallet_transactions.preview.json`
 - `wallet_transactions.backfill.preview.json`
+- `money_normalization.preview.json`
 - `manual_topups.preview.json`
 - `request_usage_logs.preview.json`
 - `request_usage_dedup.preview.json`
@@ -107,6 +109,7 @@ Current row counts from that local snapshot:
 - `ledger_entries.preview.json`: 6
 - `wallet_transactions.preview.json`: 1
 - `wallet_transactions.backfill.preview.json`: 5
+- `money_normalization.preview.json`: 6
 - `manual_topups.preview.json`: 1
 - `request_usage_logs.preview.json`: 0
 - `request_usage_dedup.preview.json`: 0
@@ -130,6 +133,12 @@ Blocking findings:
 These records must be corrected in the source export, migrated through an
 approved normalization step, or explicitly reviewed before cutover. The dry run
 must pass again after any correction.
+
+The dry run also writes `money_normalization.preview.json` for these blocked
+money values. Each row includes the source record id, field name, original
+value, whether the source field was already a cents field, and round/floor/ceil
+candidate cents. These candidates are review material only; they do not choose a
+normalization policy and do not clear `non_integer_money_values`.
 
 ## Wallets
 
@@ -231,6 +240,34 @@ Backfill candidate preview:
   real wallet transactions before cutover.
 - Candidates derived from rows already blocked by `non_integer_money_values`
   must not be applied without an explicit cents normalization decision.
+
+## Money Normalization Preview
+
+Source:
+
+- any money field read by the dry-run mapper that cannot resolve to integer
+  cents.
+
+Target:
+
+- no production table. `money_normalization.preview.json` is a local reviewer
+  artifact.
+
+Fields:
+
+- `record_id`: source identity from `id`, source event id, request id, or account id.
+- `field`: source field that failed integer-cents validation.
+- `original_value`: original value as text.
+- `already_cents`: whether the source field name looked like a cents field.
+- `round_cents`, `floor_cents`, `ceil_cents`: possible integer cents outcomes.
+- `payload`: cloned source row for reviewer context.
+
+Rules:
+
+- this preview must not be used as an automatic migration input.
+- a human-approved policy must decide how to handle each row.
+- after correction or approved normalization, the dry run must pass without
+  `non_integer_money_values`.
 
 Validation:
 
