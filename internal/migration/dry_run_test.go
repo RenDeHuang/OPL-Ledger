@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -565,6 +566,36 @@ func TestDryRunPreviewFailsOnInconsistentWalletSnapshot(t *testing.T) {
 	assertContains(t, report.BlockedReasons, "wallet_snapshot_inconsistent")
 }
 
+func TestDryRunPreviewReportsRecordIdentityForNonIntegerMoney(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{{
+		"id":             "usr_fractional",
+		"accountId":      "acct_fractional",
+		"balance":        10.1234,
+		"frozen":         0,
+		"holds":          map[string]any{},
+		"totalRecharged": 20,
+	}})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageDedup.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "resourceUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "fail" {
+		t.Fatalf("report status = %q", report.Status)
+	}
+	assertContains(t, report.BlockedReasons, "non_integer_money_values")
+	assertMismatchContains(t, report.Mismatches, "record=usr_fractional")
+}
+
 func TestDryRunPreviewFailsOnInconsistentWalletTransactionLedgerLink(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -663,4 +694,14 @@ func assertContains(t *testing.T, values []string, expected string) {
 		}
 	}
 	t.Fatalf("expected %q in %+v", expected, values)
+}
+
+func assertMismatchContains(t *testing.T, values []string, expected string) {
+	t.Helper()
+	for _, value := range values {
+		if strings.Contains(value, expected) {
+			return
+		}
+	}
+	t.Fatalf("expected mismatch containing %q in %+v", expected, values)
 }

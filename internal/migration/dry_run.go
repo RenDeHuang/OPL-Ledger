@@ -700,7 +700,7 @@ func (r *dryRun) money(record map[string]any, keys ...string) int64 {
 	centsKey := strings.Contains(strings.ToLower(key), "cent")
 	cents, err := moneyToCents(value, centsKey)
 	if err != nil {
-		r.mismatch(fmt.Sprintf("non-integer money value for %s: %v", key, value))
+		r.mismatch(fmt.Sprintf("non-integer money value for %s: %v record=%s", key, value, recordIdentity(record)))
 		r.block("non_integer_money_values")
 		return 0
 	}
@@ -939,6 +939,16 @@ func recordsByField(records []map[string]any, field string) map[string][]map[str
 		out[value] = append(out[value], record)
 	}
 	return out
+}
+
+func recordIdentity(record map[string]any) string {
+	for _, key := range []string{"id", "sourceEventId", "source_event_id", "requestId", "request_id", "accountId", "account_id"} {
+		value := stringValue(record, key)
+		if value != "" {
+			return value
+		}
+	}
+	return "unknown"
 }
 
 func stringValue(record map[string]any, keys ...string) string {
