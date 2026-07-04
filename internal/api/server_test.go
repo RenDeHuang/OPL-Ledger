@@ -289,6 +289,43 @@ func TestManualTopUpAPIReplayDoesNotDoubleCredit(t *testing.T) {
 	}
 }
 
+func TestManualTopUpAPISeparatesSourceEventIDFromReason(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":25000,
+		"sourceEventId":"console_manual_topup_1",
+		"reason":"initial launch credit",
+		"operatorUserId":"usr_admin",
+		"operatorAccountId":"acct_admin"
+	}`)
+
+	first := postManualTopUp(t, server, body)
+	if first.code != http.StatusCreated {
+		t.Fatalf("first status = %d body=%s", first.code, first.body)
+	}
+	second := postManualTopUp(t, server, body)
+	if second.code != http.StatusOK {
+		t.Fatalf("second status = %d body=%s", second.code, second.body)
+	}
+	if first.result.Entry.SourceEventID != "console_manual_topup_1" {
+		t.Fatalf("entry source event id = %q", first.result.Entry.SourceEventID)
+	}
+	if first.result.Transaction.SourceEventID != "console_manual_topup_1" {
+		t.Fatalf("transaction source event id = %q", first.result.Transaction.SourceEventID)
+	}
+	if first.result.TopUp.SourceEventID != "console_manual_topup_1" {
+		t.Fatalf("topup source event id = %q", first.result.TopUp.SourceEventID)
+	}
+	if first.result.TopUp.Reason != "initial launch credit" {
+		t.Fatalf("topup reason = %q", first.result.TopUp.Reason)
+	}
+	if second.result.Wallet.BalanceCents != 25000 || second.result.Wallet.TotalRechargedCents != 25000 {
+		t.Fatalf("wallet was double credited: %+v", second.result.Wallet)
+	}
+}
+
 func TestRequestUsageAPIAppendsIdempotentRequestDebit(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	topup := httptest.NewRecorder()

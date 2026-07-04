@@ -147,18 +147,20 @@ func (s *MemoryStore) ManualTopUp(_ context.Context, input ManualTopUpInput) (Ma
 	if input.AmountCents <= 0 {
 		return ManualTopUpResult{}, errors.New("positive_credit_required")
 	}
-	sourceEventID := input.Reason
-	if sourceEventID == "" {
-		sourceEventID = "owner_credit"
-	}
+	sourceEventID := manualTopUpSourceEventID(input)
+	reason := manualTopUpReason(input, sourceEventID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if entry, ok := s.bySourceEvent[sourceEventID]; ok {
+		replayUserID := input.UserID
+		if replayUserID == "" {
+			replayUserID = entry.UserID
+		}
 		replay := AppendEntryInput{
 			EventType:     "credit",
 			AccountID:     input.AccountID,
-			UserID:        input.UserID,
+			UserID:        replayUserID,
 			WorkspaceID:   "account",
 			SourceEventID: sourceEventID,
 			AmountCents:   input.AmountCents,
@@ -230,6 +232,7 @@ func (s *MemoryStore) ManualTopUp(_ context.Context, input ManualTopUpInput) (Ma
 		Metadata: map[string]any{
 			"operatorUserId":    input.OperatorUserID,
 			"operatorAccountId": input.OperatorAccountID,
+			"reason":            reason,
 		},
 	})
 	audit := AuditEvent{
@@ -242,6 +245,7 @@ func (s *MemoryStore) ManualTopUp(_ context.Context, input ManualTopUpInput) (Ma
 		Payload: map[string]any{
 			"sourceEventId": sourceEventID,
 			"amountCents":   input.AmountCents,
+			"reason":        reason,
 		},
 		CreatedAt: time.Now().UTC(),
 	}
@@ -253,7 +257,8 @@ func (s *MemoryStore) ManualTopUp(_ context.Context, input ManualTopUpInput) (Ma
 		TargetAccountID:     input.AccountID,
 		AmountCents:         input.AmountCents,
 		Currency:            "CNY",
-		Reason:              sourceEventID,
+		SourceEventID:       sourceEventID,
+		Reason:              reason,
 		Status:              "completed",
 		BalanceBeforeCents:  before.BalanceCents,
 		BalanceAfterCents:   after.BalanceCents,

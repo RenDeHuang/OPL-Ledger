@@ -112,5 +112,22 @@
       "billingLedger"
     ],
     "compatibilityMirrorsAllowed": false
+  },
+  "manualTopUpPolicy": {
+    "endpoint": "POST /api/v1/billing/topups",
+    "idempotencyField": "sourceEventId",
+    "legacyFallback": "reason",
+    "reasonField": "reason",
+    "requiredWrites": [
+      "wallets",
+      "ledger_entries",
+      "wallet_transactions",
+      "manual_topups",
+      "audit_events"
+    ],
+    "newClientsMustSend": [
+      "sourceEventId",
+      "reason"
+    ]
   }
 }

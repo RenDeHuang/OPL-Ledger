@@ -25,7 +25,9 @@ Purpose: manual wallet credit from Console/admin operation.
 
 Source behavior: `/home/dev/medopl-3/packages/console/src/services/billing-service.js#manualTopUp`.
 
-Idempotency: `reason` is used as the top-up source event id. If omitted, the source event id is `owner_credit`.
+Idempotency: `sourceEventId` is the top-up replay key. For compatibility with current `medopl-3`, if `sourceEventId` is omitted, `reason` is used as the source event id; if both are omitted, the source event id is `owner_credit`.
+
+Accounting note: `reason` is the operator-visible business reason. New Console/Fabric clients should send both `sourceEventId` and `reason` so replay identity and audit text are not mixed.
 
 Request:
 
@@ -34,7 +36,8 @@ Request:
   "accountId": "acct_1",
   "userId": "usr_1",
   "amountCents": 25000,
-  "reason": "owner_credit_1",
+  "sourceEventId": "console_manual_topup_1",
+  "reason": "initial launch credit",
   "operatorUserId": "usr_admin",
   "operatorAccountId": "acct_admin"
 }
@@ -66,7 +69,7 @@ Persistence requirements:
 - `wallets` snapshot is updated.
 - `ledger_entries` receives a `credit` entry.
 - `wallet_transactions` receives a `credit` transaction with before/after balances and `ledgerEntryId`.
-- `manual_topups` records operator, target account/user, before/after balances, ledger id, wallet transaction id, and audit id.
+- `manual_topups` records `sourceEventId`, operator, target account/user, reason, before/after balances, ledger id, wallet transaction id, and audit id.
 - `audit_events` records `account.credit_granted`.
 - PostgreSQL path performs these writes in one SQL transaction.
 

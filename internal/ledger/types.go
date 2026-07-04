@@ -137,6 +137,7 @@ type ManualTopUpInput struct {
 	AccountID         string `json:"accountId"`
 	UserID            string `json:"userId,omitempty"`
 	AmountCents       int64  `json:"amountCents"`
+	SourceEventID     string `json:"sourceEventId,omitempty"`
 	Reason            string `json:"reason,omitempty"`
 	OperatorUserID    string `json:"operatorUserId,omitempty"`
 	OperatorAccountID string `json:"operatorAccountId,omitempty"`
@@ -159,6 +160,7 @@ type ManualTopUp struct {
 	TargetAccountID     string    `json:"targetAccountId"`
 	AmountCents         int64     `json:"amountCents"`
 	Currency            string    `json:"currency"`
+	SourceEventID       string    `json:"sourceEventId"`
 	Reason              string    `json:"reason"`
 	Status              string    `json:"status"`
 	BalanceBeforeCents  int64     `json:"balanceBeforeCents"`

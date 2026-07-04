@@ -49,7 +49,7 @@ Verify a mutating call requires the service token:
 ```bash
 curl -i -X POST http://127.0.0.1:8788/api/v1/billing/topups \
   -H 'content-type: application/json' \
-  -d '{"accountId":"acct_local","amountCents":100,"reason":"local_verify"}'
+  -d '{"accountId":"acct_local","amountCents":100,"sourceEventId":"local_topup_1","reason":"local verification credit"}'
 ```
 
 Expected: `401` when the token is configured and omitted.
@@ -60,7 +60,7 @@ Verify the service token path:
 curl -i -X POST http://127.0.0.1:8788/api/v1/billing/topups \
   -H 'authorization: Bearer local-service-token' \
   -H 'content-type: application/json' \
-  -d '{"accountId":"acct_local","amountCents":100,"reason":"local_verify"}'
+  -d '{"accountId":"acct_local","amountCents":100,"sourceEventId":"local_topup_1","reason":"local verification credit"}'
 ```
 
 Expected: `201` on first write and `200` on exact replay.

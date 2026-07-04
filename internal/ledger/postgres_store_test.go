@@ -181,6 +181,55 @@ func TestPostgresStoreManualTopUpWritesAccountingLoopInOneTransaction(t *testing
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreManualTopUpSeparatesSourceEventIDFromReason(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id, source_event_id, request_fingerprint, amount_cents, currency, created_at FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`)).
+		WithArgs("console_manual_topup_1", "").
+		WillReturnRows(ledgerEntryRows())
+	mock.ExpectQuery(`SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds`).
+		WithArgs("acct_1").
+		WillReturnRows(walletRows())
+	mock.ExpectExec(`INSERT INTO ledger_entries`).
+		WithArgs(sqlmock.AnyArg(), "credit", "acct_1", "usr_1", "account", "", "", "", "console_manual_topup_1", "", int64(25000), "CNY", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallet_transactions`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "account", "credit", int64(25000), "CNY", "console_manual_topup_1", sqlmock.AnyArg(), "", "", int64(0), int64(25000), int64(0), int64(0), int64(25000), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO audit_events`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "", "usr_admin", "account.credit_granted", "manual_topup", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO manual_topups`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "usr_admin", "acct_admin", "usr_1", "acct_1", "console_manual_topup_1", int64(25000), "CNY", "completed", int64(0), int64(25000), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(sqlmock.AnyArg(), "usr_1", "acct_1", int64(25000), int64(0), int64(25000), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := store.ManualTopUp(context.Background(), ManualTopUpInput{
+		AccountID:         "acct_1",
+		UserID:            "usr_1",
+		AmountCents:       25000,
+		SourceEventID:     "console_manual_topup_1",
+		Reason:            "initial launch credit",
+		OperatorUserID:    "usr_admin",
+		OperatorAccountID: "acct_admin",
+	})
+	if err != nil {
+		t.Fatalf("manual topup: %v", err)
+	}
+	if result.Entry.SourceEventID != "console_manual_topup_1" || result.Transaction.SourceEventID != "console_manual_topup_1" {
+		t.Fatalf("unexpected source event ids: %+v", result)
+	}
+	if result.TopUp.SourceEventID != "console_manual_topup_1" || result.TopUp.Reason != "initial launch credit" {
+		t.Fatalf("unexpected topup fields: %+v", result.TopUp)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreManualTopUpReplayReturnsExistingAccountingLoop(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

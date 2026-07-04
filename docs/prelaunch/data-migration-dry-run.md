@@ -149,7 +149,9 @@ Mapping:
 - `operatorAccountId`
 - `targetUserId`
 - `targetAccountId`
-- `reason` or top-up source -> `source_event_id`
+- `sourceEventId` -> `source_event_id`
+- legacy `reason` or top-up source -> `source_event_id` only when `sourceEventId` is absent
+- `reason` -> payload `reason`
 - `amount` -> `amount_cents`
 - `currency`
 - `status`
@@ -161,6 +163,7 @@ Mapping:
 Validation:
 
 - `source_event_id` is unique.
+- preview rows preserve distinct `sourceEventId` and operator-visible `reason` when both exist.
 - linked wallet transaction, ledger entry, and audit event exist.
 
 ## Request Usage

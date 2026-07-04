@@ -156,10 +156,8 @@ func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput)
 	if input.AmountCents <= 0 {
 		return ManualTopUpResult{}, errors.New("positive_credit_required")
 	}
-	sourceEventID := input.Reason
-	if sourceEventID == "" {
-		sourceEventID = "owner_credit"
-	}
+	sourceEventID := manualTopUpSourceEventID(input)
+	reason := manualTopUpReason(input, sourceEventID)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ManualTopUpResult{}, err
@@ -241,6 +239,7 @@ func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput)
 	entryPayload, err := json.Marshal(map[string]any{
 		"operatorUserId":    input.OperatorUserID,
 		"operatorAccountId": input.OperatorAccountID,
+		"reason":            reason,
 	})
 	if err != nil {
 		return ManualTopUpResult{}, err
@@ -289,6 +288,7 @@ func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput)
 		Metadata: map[string]any{
 			"operatorUserId":    input.OperatorUserID,
 			"operatorAccountId": input.OperatorAccountID,
+			"reason":            reason,
 		},
 		CreatedAt: createdAt,
 	})
@@ -336,7 +336,8 @@ func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput)
 		TargetAccountID:     input.AccountID,
 		AmountCents:         input.AmountCents,
 		Currency:            "CNY",
-		Reason:              sourceEventID,
+		SourceEventID:       sourceEventID,
+		Reason:              reason,
 		Status:              "completed",
 		BalanceBeforeCents:  before.BalanceCents,
 		BalanceAfterCents:   after.BalanceCents,
@@ -355,6 +356,7 @@ func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput)
 		Payload: map[string]any{
 			"sourceEventId": sourceEventID,
 			"amountCents":   input.AmountCents,
+			"reason":        reason,
 		},
 		CreatedAt: createdAt,
 	}
@@ -404,7 +406,7 @@ func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput)
 		topup.OperatorAccountID,
 		topup.TargetUserID,
 		topup.TargetAccountID,
-		topup.Reason,
+		topup.SourceEventID,
 		topup.AmountCents,
 		topup.Currency,
 		topup.Status,
