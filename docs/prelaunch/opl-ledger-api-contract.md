@@ -89,6 +89,27 @@ Normalization: local reconciliation helpers can normalize raw Tencent bill rows 
 
 Purpose: return latest stored reconciliation report.
 
+### `GET /api/v1/billing/reconciliation/guard`
+
+Purpose: return whether new workspace creation should be blocked by billing reconciliation state.
+
+Default policy: missing report, stale report, or failed report returns `status: "blocked"` and `blockNewWorkspaces: true`. A recent `pass` report returns `status: "ok"`.
+
+Query:
+
+- `maxAgeHours`: optional positive number; defaults to `30`.
+
+Response:
+
+```json
+{
+  "status": "blocked",
+  "blockNewWorkspaces": true,
+  "reason": "billing_reconciliation_report_missing",
+  "checkedAt": "2026-07-04T12:00:00Z"
+}
+```
+
 ### `POST /api/v1/ledger/task-receipts`
 
 Purpose: record task evidence receipt.

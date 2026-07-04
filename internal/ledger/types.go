@@ -118,6 +118,15 @@ type ReconciliationReport struct {
 	CreatedAt           time.Time      `json:"createdAt"`
 }
 
+type ReconciliationGuard struct {
+	Status             string    `json:"status"`
+	BlockNewWorkspaces bool      `json:"blockNewWorkspaces"`
+	Reason             string    `json:"reason"`
+	CheckedAt          time.Time `json:"checkedAt"`
+	GeneratedAt        time.Time `json:"generatedAt,omitempty"`
+	AgeHours           float64   `json:"ageHours,omitempty"`
+}
+
 type ManualTopUpInput struct {
 	AccountID         string `json:"accountId"`
 	UserID            string `json:"userId,omitempty"`

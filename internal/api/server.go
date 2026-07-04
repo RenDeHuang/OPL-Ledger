@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/RenDeHuang/OPL-Ledger/internal/ledger"
@@ -44,6 +45,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/billing/request-usage", s.recordRequestUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/reconciliation", s.recordReconciliation)
 	s.mux.HandleFunc("GET /api/v1/billing/reconciliation/latest", s.latestReconciliation)
+	s.mux.HandleFunc("GET /api/v1/billing/reconciliation/guard", s.reconciliationGuard)
 	s.mux.HandleFunc("POST /api/v1/audit/events", s.recordAuditEvent)
 	s.mux.HandleFunc("GET /api/v1/audit/events", s.listAuditEvents)
 	s.mux.HandleFunc("POST /api/v1/ledger/evidence-records", s.recordEvidenceRecord)
@@ -289,6 +291,49 @@ func (s *Server) latestReconciliation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) reconciliationGuard(w http.ResponseWriter, r *http.Request) {
+	maxAgeHours := 30.0
+	if raw := r.URL.Query().Get("maxAgeHours"); raw != "" {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil || parsed <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_max_age_hours"})
+			return
+		}
+		maxAgeHours = parsed
+	}
+	now := time.Now().UTC()
+	report, err := s.store.LatestReconciliationReport(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusOK, ledger.ReconciliationGuard{
+			Status:             "blocked",
+			BlockNewWorkspaces: true,
+			Reason:             "billing_reconciliation_report_missing",
+			CheckedAt:          now,
+		})
+		return
+	}
+	guard := ledger.ReconciliationGuard{
+		Status:      "ok",
+		Reason:      "billing_reconciliation_ok",
+		CheckedAt:   now,
+		GeneratedAt: report.CreatedAt,
+		AgeHours:    now.Sub(report.CreatedAt).Hours(),
+	}
+	if guard.AgeHours > maxAgeHours {
+		guard.Status = "blocked"
+		guard.BlockNewWorkspaces = true
+		guard.Reason = "billing_reconciliation_report_stale"
+		writeJSON(w, http.StatusOK, guard)
+		return
+	}
+	if report.Status != "pass" {
+		guard.Status = "blocked"
+		guard.BlockNewWorkspaces = true
+		guard.Reason = "tencent_bill_reconciliation_failed"
+	}
+	writeJSON(w, http.StatusOK, guard)
 }
 
 func filterFromQuery(r *http.Request) ledger.EntryFilter {

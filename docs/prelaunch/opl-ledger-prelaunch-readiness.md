@@ -133,6 +133,7 @@ Implemented:
 - task receipt record/query with PostgreSQL `accountId/workspaceId/taskId/sourceEventId` idempotency;
 - Console-provided workspace ownership validation hook for task receipt writes;
 - reconciliation submit/latest;
+- reconciliation guard API for missing, stale, failed, and passing recent reports;
 - Tencent reconciliation primitive with raw bill row normalization, workspace tag extraction, missing workspace fail-closed, and mixed-currency fail-closed behavior;
 - read-only Deployment evidence collector primitive;
 - React + TypeScript operator UI baseline.
@@ -144,7 +145,6 @@ Not complete:
 - compute/storage prepaid hold create/release API/PostgreSQL transaction wiring;
 - settlement API/PostgreSQL transaction wiring for compute/storage hourly billing;
 - resource usage log API/PostgreSQL transaction wiring;
-- reconciliation guard API;
 - persisted Kubernetes evidence snapshots;
 - service-to-service auth;
 - Console/Fabric integration;

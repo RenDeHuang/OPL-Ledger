@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/RenDeHuang/OPL-Ledger/internal/ledger"
 )
@@ -534,6 +535,100 @@ func TestReconciliationAPIStoresLatestReport(t *testing.T) {
 	}
 	if report.Provider != "tencent" || report.Status != "pass" {
 		t.Fatalf("unexpected reconciliation report: %+v", report)
+	}
+}
+
+func TestReconciliationGuardBlocksWhenReportMissing(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/billing/reconciliation/guard", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("guard status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var guard ledger.ReconciliationGuard
+	if err := json.Unmarshal(rec.Body.Bytes(), &guard); err != nil {
+		t.Fatalf("decode guard: %v", err)
+	}
+	if guard.Status != "blocked" || !guard.BlockNewWorkspaces || guard.Reason != "billing_reconciliation_report_missing" {
+		t.Fatalf("guard = %+v", guard)
+	}
+}
+
+func TestReconciliationGuardBlocksWhenReportStale(t *testing.T) {
+	store := ledger.NewMemoryStore()
+	_, err := store.AppendReconciliationReport(nil, ledger.ReconciliationReport{
+		Provider:  "tencent",
+		Status:    "pass",
+		CreatedAt: time.Now().UTC().Add(-48 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("seed report: %v", err)
+	}
+	server := NewServer(store)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/billing/reconciliation/guard?maxAgeHours=30", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("guard status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var guard ledger.ReconciliationGuard
+	if err := json.Unmarshal(rec.Body.Bytes(), &guard); err != nil {
+		t.Fatalf("decode guard: %v", err)
+	}
+	if guard.Status != "blocked" || guard.Reason != "billing_reconciliation_report_stale" {
+		t.Fatalf("guard = %+v", guard)
+	}
+}
+
+func TestReconciliationGuardBlocksWhenReportFailed(t *testing.T) {
+	store := ledger.NewMemoryStore()
+	_, err := store.AppendReconciliationReport(nil, ledger.ReconciliationReport{
+		Provider:  "tencent",
+		Status:    "fail",
+		CreatedAt: time.Now().UTC().Add(-1 * time.Hour),
+		Payload: map[string]any{
+			"lines": []any{map[string]any{"workspaceId": "ws_1", "status": "fail"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed report: %v", err)
+	}
+	server := NewServer(store)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/billing/reconciliation/guard", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("guard status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var guard ledger.ReconciliationGuard
+	if err := json.Unmarshal(rec.Body.Bytes(), &guard); err != nil {
+		t.Fatalf("decode guard: %v", err)
+	}
+	if guard.Status != "blocked" || guard.Reason != "tencent_bill_reconciliation_failed" {
+		t.Fatalf("guard = %+v", guard)
+	}
+}
+
+func TestReconciliationGuardAllowsWhenReportPassedRecently(t *testing.T) {
+	store := ledger.NewMemoryStore()
+	_, err := store.AppendReconciliationReport(nil, ledger.ReconciliationReport{
+		Provider:  "tencent",
+		Status:    "pass",
+		CreatedAt: time.Now().UTC().Add(-1 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("seed report: %v", err)
+	}
+	server := NewServer(store)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/billing/reconciliation/guard", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("guard status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var guard ledger.ReconciliationGuard
+	if err := json.Unmarshal(rec.Body.Bytes(), &guard); err != nil {
+		t.Fatalf("decode guard: %v", err)
+	}
+	if guard.Status != "ok" || guard.BlockNewWorkspaces || guard.Reason != "billing_reconciliation_ok" {
+		t.Fatalf("guard = %+v", guard)
 	}
 }
 

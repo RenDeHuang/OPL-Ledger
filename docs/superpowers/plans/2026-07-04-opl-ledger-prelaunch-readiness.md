@@ -266,10 +266,10 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `internal/api/server.go`
 - Modify: `internal/ledger/types.go`
 
-- [ ] Test missing report blocks new workspaces.
-- [ ] Test stale report blocks new workspaces.
-- [ ] Test failed report blocks new workspaces.
-- [ ] Test passing recent report allows new workspaces.
+- [x] Test missing report blocks new workspaces.
+- [x] Test stale report blocks new workspaces.
+- [x] Test failed report blocks new workspaces.
+- [x] Test passing recent report allows new workspaces.
 
 ### Task 25: Persist Kubernetes Evidence Snapshots
 
