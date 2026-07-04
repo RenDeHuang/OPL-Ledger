@@ -316,9 +316,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `docs/prelaunch/cutover-checklist.md`
 - Create: `docs/prelaunch/rollback-checklist.md`
 
-- [ ] Define cutover gates.
-- [ ] Define rollback to OPL Cloud billing path.
-- [ ] Require explicit approval for production changes.
+- [x] Define cutover gates.
+- [x] Define rollback to OPL Cloud billing path.
+- [x] Require explicit approval for production changes.
 
 ### Task 30: Add Local Pre-Launch Verification
 

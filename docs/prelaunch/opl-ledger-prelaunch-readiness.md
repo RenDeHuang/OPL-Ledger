@@ -139,6 +139,7 @@ Implemented:
 - service-to-service Bearer token authentication for mutating endpoints and admin Bearer token authorization for operator evidence reads when tokens are configured;
 - local-only shadow mode comparison procedure and safety rules;
 - local data migration dry-run mapping and required report format;
+- cutover and rollback checklists requiring explicit production approval;
 - React + TypeScript operator UI baseline.
 
 Not complete:
