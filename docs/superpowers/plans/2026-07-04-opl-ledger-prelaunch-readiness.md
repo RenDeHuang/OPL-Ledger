@@ -288,9 +288,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/auth/auth.go`
 - Modify: `internal/api/server.go`
 
-- [ ] Test missing token rejects mutating endpoints.
-- [ ] Test service token allows Console/Fabric calls.
-- [ ] Test admin token allows operator evidence reads.
+- [x] Test missing token rejects mutating endpoints.
+- [x] Test service token allows Console/Fabric calls.
+- [x] Test admin token allows operator evidence reads.
 
 ### Task 27: Add Shadow Mode Comparison Tool
 

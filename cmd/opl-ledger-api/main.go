@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/RenDeHuang/OPL-Ledger/internal/api"
+	"github.com/RenDeHuang/OPL-Ledger/internal/auth"
 	"github.com/RenDeHuang/OPL-Ledger/internal/db"
 	"github.com/RenDeHuang/OPL-Ledger/internal/ledger"
 	_ "github.com/lib/pq"
@@ -19,7 +20,7 @@ func main() {
 		addr = ":" + port
 	}
 	store := newStore()
-	handler := api.NewServer(store)
+	handler := api.NewServerWithOptions(store, api.Options{Auth: auth.ConfigFromEnvironment()})
 	log.Printf("opl-ledger-api listening on %s", addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)

@@ -10,6 +10,13 @@ Pre-launch contract for `OPL-Cloud` / `medopl-3` consumers. Production traffic r
 - Conflicting replay returns `409 Conflict`.
 - Amounts are integer cents in `CNY`; no floating point money values.
 
+## Authentication
+
+- Local/dev mode: if `OPL_LEDGER_SERVICE_TOKEN` or `OPL_LEDGER_ADMIN_TOKEN` is empty, the corresponding route class skips token enforcement.
+- Mutating endpoints: when `OPL_LEDGER_SERVICE_TOKEN` is configured, callers must send `Authorization: Bearer <service-token>`.
+- Operator evidence reads: when `OPL_LEDGER_ADMIN_TOKEN` is configured, audit, evidence, task receipt, and reconciliation guard reads require `Authorization: Bearer <admin-token>`.
+- Missing token returns `401`; invalid token returns `403`.
+
 ## Implemented
 
 ### `POST /api/v1/billing/topups`

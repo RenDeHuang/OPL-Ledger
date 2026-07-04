@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/RenDeHuang/OPL-Ledger/internal/auth"
 	"github.com/RenDeHuang/OPL-Ledger/internal/ledger"
 	"github.com/RenDeHuang/OPL-Ledger/internal/ownership"
 	"github.com/RenDeHuang/OPL-Ledger/internal/reconciliation"
@@ -19,15 +20,30 @@ import (
 type Server struct {
 	store              ledger.Store
 	workspaceOwnership ownership.WorkspaceResolver
+	auth               auth.Config
 	mux                *http.ServeMux
 }
 
+type Options struct {
+	WorkspaceOwnership ownership.WorkspaceResolver
+	Auth               auth.Config
+}
+
 func NewServer(store ledger.Store) http.Handler {
-	return NewServerWithOwnership(store, nil)
+	return NewServerWithOptions(store, Options{})
 }
 
 func NewServerWithOwnership(store ledger.Store, workspaceOwnership ownership.WorkspaceResolver) http.Handler {
-	s := &Server{store: store, workspaceOwnership: workspaceOwnership, mux: http.NewServeMux()}
+	return NewServerWithOptions(store, Options{WorkspaceOwnership: workspaceOwnership})
+}
+
+func NewServerWithOptions(store ledger.Store, options Options) http.Handler {
+	s := &Server{
+		store:              store,
+		workspaceOwnership: options.WorkspaceOwnership,
+		auth:               options.Auth,
+		mux:                http.NewServeMux(),
+	}
 	s.routes()
 	return s
 }
@@ -59,6 +75,9 @@ func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) appendEntry(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
 	var input ledger.AppendEntryInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
@@ -99,6 +118,9 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) manualTopUp(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
 	var input ledger.ManualTopUpInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
@@ -117,6 +139,9 @@ func (s *Server) manualTopUp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) recordRequestUsage(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
 	var input ledger.RequestUsageInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
@@ -157,6 +182,9 @@ func (s *Server) recordRequestUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) recordTaskReceipt(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
 	var input ledger.TaskReceiptInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
@@ -175,6 +203,9 @@ func (s *Server) recordTaskReceipt(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) recordAuditEvent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
 	var input ledger.AuditEventInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
@@ -189,6 +220,9 @@ func (s *Server) recordAuditEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listAuditEvents(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	q := r.URL.Query()
 	events, err := s.store.ListAuditEvents(r.Context(), ledger.AuditEventFilter{
 		AccountID:     q.Get("accountId"),
@@ -204,6 +238,9 @@ func (s *Server) listAuditEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) recordEvidenceRecord(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
 	var input ledger.EvidenceRecordInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
@@ -218,6 +255,9 @@ func (s *Server) recordEvidenceRecord(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listEvidenceRecords(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	q := r.URL.Query()
 	records, err := s.store.ListEvidenceRecords(r.Context(), ledger.EvidenceRecordFilter{
 		AccountID:     q.Get("accountId"),
@@ -233,6 +273,9 @@ func (s *Server) listEvidenceRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listTaskReceipts(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	q := r.URL.Query()
 	receipts, err := s.store.ListTaskReceipts(r.Context(), ledger.TaskReceiptFilter{
 		AccountID:   q.Get("accountId"),
@@ -247,6 +290,9 @@ func (s *Server) listTaskReceipts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) recordReconciliation(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
 	var input struct {
 		Provider    string                      `json:"provider"`
 		MarkupRate  float64                     `json:"markupRate"`
@@ -294,6 +340,9 @@ func (s *Server) latestReconciliation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reconciliationGuard(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	maxAgeHours := 30.0
 	if raw := r.URL.Query().Get("maxAgeHours"); raw != "" {
 		parsed, err := strconv.ParseFloat(raw, 64)
@@ -353,6 +402,31 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func (s *Server) requireService(w http.ResponseWriter, r *http.Request) bool {
+	return s.requireRole(w, r, auth.RoleService)
+}
+
+func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	return s.requireRole(w, r, auth.RoleAdmin)
+}
+
+func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, role auth.Role) bool {
+	err := auth.Authorize(r, s.auth, role)
+	if err == nil {
+		return true
+	}
+	writeAuthError(w, err)
+	return false
+}
+
+func writeAuthError(w http.ResponseWriter, err error) {
+	status := http.StatusForbidden
+	if errors.Is(err, auth.ErrMissingToken) {
+		status = http.StatusUnauthorized
+	}
+	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 
 func writeAppendError(w http.ResponseWriter, err error) {
