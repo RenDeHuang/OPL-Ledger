@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
@@ -229,6 +230,7 @@ func TestPostgresStoreRecordRequestUsageWritesDedupAndDebitLoopInOneTransaction(
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)
 	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	quotaLimit := int64(2)
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT usage_log_id, request_fingerprint\s+FROM request_usage_dedup`).
@@ -272,6 +274,7 @@ func TestPostgresStoreRecordRequestUsageWritesDedupAndDebitLoopInOneTransaction(
 		AmountCents:        25,
 		SourceEventID:      "gateway_req_1",
 		RequestFingerprint: "fp_1",
+		RequestQuota:       &usage.RequestQuota{Limit: &quotaLimit},
 	})
 	if err != nil {
 		t.Fatalf("record request usage: %v", err)
@@ -281,6 +284,33 @@ func TestPostgresStoreRecordRequestUsageWritesDedupAndDebitLoopInOneTransaction(
 	}
 	if result.Wallet.BalanceCents != 24975 || result.Log.AmountCents != 25 || result.Transaction.UsageLogID != result.Log.ID || result.Entry.AmountCents != -25 {
 		t.Fatalf("unexpected request usage result: %+v", result)
+	}
+	if result.Log.Quota == nil || result.Log.Quota.Used != 1 {
+		t.Fatalf("quota result = %+v", result.Log.Quota)
+	}
+	assertSQLExpectations(t, mock)
+}
+
+func TestPostgresStoreRecordRequestUsageQuotaExceededRollsBackBeforeMutation(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	limit := int64(0)
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	_, err := store.RecordRequestUsage(context.Background(), RequestUsageInput{
+		AccountID:          "acct_1",
+		UserID:             "usr_1",
+		WorkspaceID:        "ws_1",
+		RequestID:          "req_1",
+		AmountCents:        25,
+		SourceEventID:      "gateway_req_1",
+		RequestFingerprint: "fp_1",
+		RequestQuota:       &usage.RequestQuota{Limit: &limit},
+	})
+	if !errors.Is(err, usage.ErrRequestQuotaExceeded) {
+		t.Fatalf("expected quota exceeded, got %v", err)
 	}
 	assertSQLExpectations(t, mock)
 }

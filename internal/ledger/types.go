@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
@@ -163,17 +164,18 @@ type AuditEvent struct {
 }
 
 type RequestUsageInput struct {
-	AccountID          string `json:"accountId,omitempty"`
-	UserID             string `json:"userId,omitempty"`
-	WorkspaceID        string `json:"workspaceId"`
-	RequestID          string `json:"requestId"`
-	Provider           string `json:"provider,omitempty"`
-	Model              string `json:"model,omitempty"`
-	InputTokens        int64  `json:"inputTokens,omitempty"`
-	OutputTokens       int64  `json:"outputTokens,omitempty"`
-	AmountCents        int64  `json:"amountCents"`
-	SourceEventID      string `json:"sourceEventId,omitempty"`
-	RequestFingerprint string `json:"requestFingerprint,omitempty"`
+	AccountID          string              `json:"accountId,omitempty"`
+	UserID             string              `json:"userId,omitempty"`
+	WorkspaceID        string              `json:"workspaceId"`
+	RequestID          string              `json:"requestId"`
+	Provider           string              `json:"provider,omitempty"`
+	Model              string              `json:"model,omitempty"`
+	InputTokens        int64               `json:"inputTokens,omitempty"`
+	OutputTokens       int64               `json:"outputTokens,omitempty"`
+	AmountCents        int64               `json:"amountCents"`
+	SourceEventID      string              `json:"sourceEventId,omitempty"`
+	RequestFingerprint string              `json:"requestFingerprint,omitempty"`
+	RequestQuota       *usage.RequestQuota `json:"requestQuota,omitempty"`
 }
 
 type RequestUsageResult struct {
@@ -186,21 +188,22 @@ type RequestUsageResult struct {
 }
 
 type RequestUsageLog struct {
-	ID                   string    `json:"id"`
-	UserID               string    `json:"userId,omitempty"`
-	AccountID            string    `json:"accountId"`
-	WorkspaceID          string    `json:"workspaceId"`
-	RequestID            string    `json:"requestId"`
-	Provider             string    `json:"provider,omitempty"`
-	Model                string    `json:"model,omitempty"`
-	InputTokens          int64     `json:"inputTokens"`
-	OutputTokens         int64     `json:"outputTokens"`
-	AmountCents          int64     `json:"amountCents"`
-	RequestedAmountCents int64     `json:"requestedAmountCents"`
-	UnpaidCents          int64     `json:"unpaidCents"`
-	Currency             string    `json:"currency"`
-	SourceEventID        string    `json:"sourceEventId"`
-	RequestFingerprint   string    `json:"requestFingerprint"`
-	LedgerEntryID        string    `json:"ledgerEntryId,omitempty"`
-	CreatedAt            time.Time `json:"createdAt"`
+	ID                   string              `json:"id"`
+	UserID               string              `json:"userId,omitempty"`
+	AccountID            string              `json:"accountId"`
+	WorkspaceID          string              `json:"workspaceId"`
+	RequestID            string              `json:"requestId"`
+	Provider             string              `json:"provider,omitempty"`
+	Model                string              `json:"model,omitempty"`
+	InputTokens          int64               `json:"inputTokens"`
+	OutputTokens         int64               `json:"outputTokens"`
+	AmountCents          int64               `json:"amountCents"`
+	RequestedAmountCents int64               `json:"requestedAmountCents"`
+	UnpaidCents          int64               `json:"unpaidCents"`
+	Currency             string              `json:"currency"`
+	SourceEventID        string              `json:"sourceEventId"`
+	RequestFingerprint   string              `json:"requestFingerprint"`
+	LedgerEntryID        string              `json:"ledgerEntryId,omitempty"`
+	Quota                *usage.RequestQuota `json:"quota,omitempty"`
+	CreatedAt            time.Time           `json:"createdAt"`
 }

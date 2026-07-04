@@ -133,8 +133,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/usage/quota_test.go`
 - Create: `internal/usage/quota.go`
 
-- [ ] Test quota exceeded returns error.
-- [ ] Test quota rejection does not change wallet, ledger, usage log, or dedup state.
+- [x] Test quota exceeded returns error.
+- [x] Test quota rejection does not change wallet, ledger, usage log, or dedup state.
 
 ### Task 11: Implement Request Usage Billing Transaction
 

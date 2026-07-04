@@ -374,6 +374,71 @@ func TestRequestUsageAPIConflictingReplayReturnsConflict(t *testing.T) {
 	}
 }
 
+func TestRequestUsageAPIQuotaExceededDoesNotMutateBillingState(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := httptest.NewRecorder()
+	server.ServeHTTP(topup, httptest.NewRequest(http.MethodPost, "/api/v1/billing/topups", bytes.NewReader([]byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":1000,
+		"reason":"owner_credit_1"
+	}`))))
+	if topup.Code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.Code, topup.Body.String())
+	}
+
+	rejected := httptest.NewRecorder()
+	server.ServeHTTP(rejected, httptest.NewRequest(http.MethodPost, "/api/v1/billing/request-usage", bytes.NewReader([]byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"requestId":"req_1",
+		"amountCents":25,
+		"sourceEventId":"gateway_req_1",
+		"requestQuota":{"limit":0,"used":0}
+	}`))))
+	if rejected.Code != http.StatusBadRequest {
+		t.Fatalf("rejected status = %d body=%s", rejected.Code, rejected.Body.String())
+	}
+
+	allowed := httptest.NewRecorder()
+	server.ServeHTTP(allowed, httptest.NewRequest(http.MethodPost, "/api/v1/billing/request-usage", bytes.NewReader([]byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"requestId":"req_1",
+		"amountCents":25,
+		"sourceEventId":"gateway_req_1",
+		"requestQuota":{"limit":2,"used":0}
+	}`))))
+	if allowed.Code != http.StatusCreated {
+		t.Fatalf("allowed status = %d body=%s", allowed.Code, allowed.Body.String())
+	}
+	var result ledger.RequestUsageResult
+	if err := json.Unmarshal(allowed.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode allowed result: %v", err)
+	}
+	if result.Wallet.BalanceCents != 975 {
+		t.Fatalf("wallet balance = %d", result.Wallet.BalanceCents)
+	}
+	if result.Log.Quota == nil || result.Log.Quota.Used != 1 {
+		t.Fatalf("quota result = %+v", result.Log.Quota)
+	}
+
+	summary := httptest.NewRecorder()
+	server.ServeHTTP(summary, httptest.NewRequest(http.MethodGet, "/api/v1/ledger/summary?accountId=acct_1", nil))
+	if summary.Code != http.StatusOK {
+		t.Fatalf("summary status = %d body=%s", summary.Code, summary.Body.String())
+	}
+	var ledgerSummary ledger.Summary
+	if err := json.Unmarshal(summary.Body.Bytes(), &ledgerSummary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if ledgerSummary.BalanceCents != 975 || ledgerSummary.EntryCount != 2 {
+		t.Fatalf("unexpected summary after rejection and one success: %+v", ledgerSummary)
+	}
+}
+
 func TestTaskReceiptAPIPostsAndQueriesReceipts(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	body := []byte(`{

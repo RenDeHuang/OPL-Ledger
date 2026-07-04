@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
@@ -447,6 +448,11 @@ func (s *PostgresStore) RecordRequestUsage(ctx context.Context, input RequestUsa
 		}
 	}()
 
+	nextQuota, err := usage.IncrementOptionalRequestQuota(input.RequestQuota, 1, nowUTC())
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
+
 	usageLogID, fingerprint, found, err := s.requestUsageDedup(ctx, tx, input.WorkspaceID, sourceEventID, input.RequestID)
 	if err != nil {
 		return RequestUsageResult{}, err
@@ -644,6 +650,7 @@ func (s *PostgresStore) RecordRequestUsage(ctx context.Context, input RequestUsa
 		SourceEventID:        sourceEventID,
 		RequestFingerprint:   input.RequestFingerprint,
 		LedgerEntryID:        entry.ID,
+		Quota:                nextQuota,
 		CreatedAt:            createdAt,
 	}
 	logPayload, err := json.Marshal(log)

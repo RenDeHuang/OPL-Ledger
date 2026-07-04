@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RenDeHuang/OPL-Ledger/internal/usage"
 	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
@@ -278,6 +279,10 @@ func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageIn
 	if input.AmountCents < 0 {
 		return RequestUsageResult{}, errors.New("non_negative_amount_required")
 	}
+	nextQuota, err := usage.IncrementOptionalRequestQuota(input.RequestQuota, 1, time.Now().UTC())
+	if err != nil {
+		return RequestUsageResult{}, err
+	}
 	sourceEventID := input.SourceEventID
 	if sourceEventID == "" {
 		sourceEventID = "gateway_request:" + input.RequestID
@@ -373,6 +378,7 @@ func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageIn
 		Currency:             "CNY",
 		SourceEventID:        sourceEventID,
 		RequestFingerprint:   input.RequestFingerprint,
+		Quota:                nextQuota,
 		CreatedAt:            createdAt,
 	}
 	if entry.ID != "" {

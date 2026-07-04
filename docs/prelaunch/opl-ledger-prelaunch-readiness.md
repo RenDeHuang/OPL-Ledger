@@ -123,7 +123,7 @@ Implemented:
 - wallet balance/frozen/hold arithmetic;
 - wallet snapshot PostgreSQL table;
 - manual top-up API with wallet snapshot, credit ledger entry, wallet transaction, manual topup record, and audit event in one PostgreSQL transaction;
-- request usage API with dedup-first PostgreSQL transaction, available-balance debit, usage log, wallet transaction, and audit event;
+- request usage API with quota check, dedup-first PostgreSQL transaction, available-balance debit, usage log, wallet transaction, and audit event;
 - task receipt record/query;
 - reconciliation submit/latest;
 - Tencent reconciliation primitive;
@@ -133,7 +133,7 @@ Implemented:
 Not complete:
 
 - wallet transaction listing and reconciliation queries;
-- request quota mutation and rejection in one SQL transaction;
+- persisted request quota management API; current request usage accepts Console-provided quota snapshots and records the incremented quota in the usage log payload;
 - compute/storage prepaid hold creation/capture/release;
 - settlement for compute/storage hourly billing;
 - resource usage logs;
