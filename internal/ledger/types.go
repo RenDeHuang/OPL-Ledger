@@ -288,6 +288,14 @@ type EvidenceRecordFilter = evidencelog.RecordFilter
 
 type KubernetesEvidenceSnapshot = k8sevidence.Snapshot
 
+type KubernetesEvidenceSnapshotFilter struct {
+	ClusterID   string
+	Namespace   string
+	ObjectKind  string
+	ObjectName  string
+	WorkspaceID string
+}
+
 type RequestUsageInput struct {
 	AccountID          string              `json:"accountId,omitempty"`
 	UserID             string              `json:"userId,omitempty"`

@@ -75,6 +75,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/audit/events", s.listAuditEvents)
 	s.mux.HandleFunc("POST /api/v1/ledger/evidence-records", s.recordEvidenceRecord)
 	s.mux.HandleFunc("GET /api/v1/ledger/evidence-records", s.listEvidenceRecords)
+	s.mux.HandleFunc("POST /api/v1/ledger/kubernetes-evidence-snapshots", s.recordKubernetesEvidenceSnapshot)
+	s.mux.HandleFunc("GET /api/v1/ledger/kubernetes-evidence-snapshots", s.listKubernetesEvidenceSnapshots)
 	s.mux.HandleFunc("POST /api/v1/ledger/task-receipts", s.recordTaskReceipt)
 	s.mux.HandleFunc("GET /api/v1/ledger/task-receipts", s.listTaskReceipts)
 }
@@ -409,6 +411,42 @@ func (s *Server) listEvidenceRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, records)
+}
+
+func (s *Server) recordKubernetesEvidenceSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !s.requireService(w, r) {
+		return
+	}
+	var snapshot ledger.KubernetesEvidenceSnapshot
+	if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
+		return
+	}
+	recorded, err := s.store.AppendKubernetesEvidenceSnapshot(r.Context(), snapshot)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, recorded)
+}
+
+func (s *Server) listKubernetesEvidenceSnapshots(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	q := r.URL.Query()
+	snapshots, err := s.store.ListKubernetesEvidenceSnapshots(r.Context(), ledger.KubernetesEvidenceSnapshotFilter{
+		ClusterID:   q.Get("clusterId"),
+		Namespace:   q.Get("namespace"),
+		ObjectKind:  q.Get("objectKind"),
+		ObjectName:  q.Get("objectName"),
+		WorkspaceID: q.Get("workspaceId"),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshots)
 }
 
 func (s *Server) listTaskReceipts(w http.ResponseWriter, r *http.Request) {

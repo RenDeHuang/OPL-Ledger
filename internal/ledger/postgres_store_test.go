@@ -745,6 +745,44 @@ func TestPostgresStoreAppendKubernetesEvidenceSnapshotStoresRedactedObject(t *te
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreListKubernetesEvidenceSnapshotsFiltersByWorkspaceAndKind(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	collectedAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	redactedObject := map[string]any{
+		"kind":          "Deployment",
+		"name":          "opl-ws-1",
+		"readyReplicas": float64(1),
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT cluster_id, namespace, object_kind, object_name, workspace_id, resource_version, observed_generation, readiness_status, redacted_object, collected_at FROM kubernetes_evidence_snapshots WHERE object_kind = $1 AND workspace_id = $2 ORDER BY collected_at DESC, id DESC`)).
+		WithArgs("Deployment", "ws_1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"cluster_id",
+			"namespace",
+			"object_kind",
+			"object_name",
+			"workspace_id",
+			"resource_version",
+			"observed_generation",
+			"readiness_status",
+			"redacted_object",
+			"collected_at",
+		}).AddRow("cluster_1", "opl-cloud", "Deployment", "opl-ws-1", "ws_1", "42", int64(7), "ready", mustJSON(t, redactedObject), collectedAt))
+
+	snapshots, err := store.ListKubernetesEvidenceSnapshots(context.Background(), KubernetesEvidenceSnapshotFilter{
+		WorkspaceID: "ws_1",
+		ObjectKind:  "Deployment",
+	})
+	if err != nil {
+		t.Fatalf("list kubernetes evidence snapshots: %v", err)
+	}
+	if len(snapshots) != 1 || snapshots[0].ObjectName != "opl-ws-1" || snapshots[0].ReadinessStatus != "ready" {
+		t.Fatalf("snapshots = %+v", snapshots)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreAppendTaskReceiptReplaysExistingSourceEvent(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

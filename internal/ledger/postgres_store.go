@@ -31,6 +31,7 @@ type Store interface {
 	AppendEvidenceRecord(context.Context, EvidenceRecordInput) (EvidenceRecord, error)
 	ListEvidenceRecords(context.Context, EvidenceRecordFilter) ([]EvidenceRecord, error)
 	AppendKubernetesEvidenceSnapshot(context.Context, KubernetesEvidenceSnapshot) (KubernetesEvidenceSnapshot, error)
+	ListKubernetesEvidenceSnapshots(context.Context, KubernetesEvidenceSnapshotFilter) ([]KubernetesEvidenceSnapshot, error)
 	ListEntries(context.Context, EntryFilter) ([]Entry, error)
 	Summary(context.Context, EntryFilter) (Summary, error)
 	AppendTaskReceipt(context.Context, TaskReceiptInput) (TaskReceipt, error)
@@ -1451,6 +1452,21 @@ func (s *PostgresStore) AppendKubernetesEvidenceSnapshot(ctx context.Context, sn
 	return snapshot, nil
 }
 
+func (s *PostgresStore) ListKubernetesEvidenceSnapshots(ctx context.Context, filter KubernetesEvidenceSnapshotFilter) ([]KubernetesEvidenceSnapshot, error) {
+	where, args := kubernetesEvidenceSnapshotWhere(filter)
+	query := `SELECT cluster_id, namespace, object_kind, object_name, workspace_id, resource_version, observed_generation, readiness_status, redacted_object, collected_at FROM kubernetes_evidence_snapshots`
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	query += ` ORDER BY collected_at DESC, id DESC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanKubernetesEvidenceSnapshots(rows)
+}
+
 func (s *PostgresStore) entriesForIdempotencyKeys(ctx context.Context, tx *sql.Tx, input AppendEntryInput) ([]Entry, error) {
 	rows, err := tx.QueryContext(ctx, selectLedgerEntryColumns+` FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`, input.SourceEventID, input.RequestFingerprint)
 	if err != nil {
@@ -2364,6 +2380,24 @@ func evidenceRecordWhere(filter EvidenceRecordFilter) (string, []any) {
 	return strings.Join(clauses, " AND "), args
 }
 
+func kubernetesEvidenceSnapshotWhere(filter KubernetesEvidenceSnapshotFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	add := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	add("cluster_id", filter.ClusterID)
+	add("namespace", filter.Namespace)
+	add("object_kind", filter.ObjectKind)
+	add("object_name", filter.ObjectName)
+	add("workspace_id", filter.WorkspaceID)
+	return strings.Join(clauses, " AND "), args
+}
+
 func scanEntries(rows *sql.Rows) ([]Entry, error) {
 	var entries []Entry
 	for rows.Next() {
@@ -2411,6 +2445,44 @@ func scanEvidenceRecords(rows *sql.Rows) ([]EvidenceRecord, error) {
 		return nil, err
 	}
 	return records, nil
+}
+
+func scanKubernetesEvidenceSnapshots(rows *sql.Rows) ([]KubernetesEvidenceSnapshot, error) {
+	var snapshots []KubernetesEvidenceSnapshot
+	for rows.Next() {
+		var snapshot KubernetesEvidenceSnapshot
+		var workspaceID sql.NullString
+		var redactedObject []byte
+		err := rows.Scan(
+			&snapshot.ClusterID,
+			&snapshot.Namespace,
+			&snapshot.ObjectKind,
+			&snapshot.ObjectName,
+			&workspaceID,
+			&snapshot.ResourceVersion,
+			&snapshot.ObservedGeneration,
+			&snapshot.ReadinessStatus,
+			&redactedObject,
+			&snapshot.CollectedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.WorkspaceID = workspaceID.String
+		if len(redactedObject) > 0 {
+			if err := json.Unmarshal(redactedObject, &snapshot.RedactedObject); err != nil {
+				return nil, err
+			}
+		}
+		if snapshot.RedactedObject == nil {
+			snapshot.RedactedObject = map[string]any{}
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return snapshots, nil
 }
 
 type ledgerEntryScanner interface {

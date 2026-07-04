@@ -862,6 +862,54 @@ func TestTaskReceiptAPIPostsAndQueriesReceipts(t *testing.T) {
 	}
 }
 
+func TestKubernetesEvidenceSnapshotAPIPostsAndQueriesSnapshots(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"clusterId":"cluster_1",
+		"namespace":"opl-cloud",
+		"objectKind":"Deployment",
+		"objectName":"opl-ws-1",
+		"workspaceId":"ws_1",
+		"resourceVersion":"42",
+		"observedGeneration":7,
+		"readinessStatus":"ready",
+		"redactedObject":{
+			"kind":"Deployment",
+			"name":"opl-ws-1",
+			"readyReplicas":1
+		}
+	}`)
+	post := httptest.NewRecorder()
+	server.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/api/v1/ledger/kubernetes-evidence-snapshots", bytes.NewReader(body)))
+	if post.Code != http.StatusCreated {
+		t.Fatalf("post kubernetes snapshot status = %d body=%s", post.Code, post.Body.String())
+	}
+	var posted ledger.KubernetesEvidenceSnapshot
+	if err := json.Unmarshal(post.Body.Bytes(), &posted); err != nil {
+		t.Fatalf("decode posted snapshot: %v", err)
+	}
+	if posted.CollectedAt.IsZero() {
+		t.Fatalf("expected collectedAt to be set")
+	}
+
+	get := httptest.NewRecorder()
+	server.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/ledger/kubernetes-evidence-snapshots?workspaceId=ws_1&objectKind=Deployment", nil))
+	if get.Code != http.StatusOK {
+		t.Fatalf("get kubernetes snapshots status = %d body=%s", get.Code, get.Body.String())
+	}
+	var snapshots []ledger.KubernetesEvidenceSnapshot
+	if err := json.Unmarshal(get.Body.Bytes(), &snapshots); err != nil {
+		t.Fatalf("decode snapshots: %v", err)
+	}
+	if len(snapshots) != 1 || snapshots[0].ObjectName != "opl-ws-1" || snapshots[0].ReadinessStatus != "ready" {
+		t.Fatalf("snapshots = %+v", snapshots)
+	}
+	payload := string(mustJSON(t, snapshots[0].RedactedObject))
+	if bytes.Contains([]byte(payload), []byte("secret-value")) {
+		t.Fatalf("snapshot leaked secret value: %s", payload)
+	}
+}
+
 func TestReconciliationAPIStoresLatestReport(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	body := []byte(`{
@@ -1145,6 +1193,15 @@ func getWalletTransactions(t *testing.T, server http.Handler, target string) wal
 		}
 	}
 	return response
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	return payload
 }
 
 func postResourceUsage(t *testing.T, server http.Handler, body []byte) resourceUsageAPIResponse {

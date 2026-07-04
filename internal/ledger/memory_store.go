@@ -881,6 +881,19 @@ func (s *MemoryStore) AppendKubernetesEvidenceSnapshot(_ context.Context, snapsh
 	return snapshot, nil
 }
 
+func (s *MemoryStore) ListKubernetesEvidenceSnapshots(_ context.Context, filter KubernetesEvidenceSnapshotFilter) ([]KubernetesEvidenceSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []KubernetesEvidenceSnapshot
+	for _, snapshot := range s.kubernetesSnapshots {
+		if !matchesKubernetesEvidenceSnapshot(snapshot, filter) {
+			continue
+		}
+		out = append(out, cloneKubernetesEvidenceSnapshot(snapshot))
+	}
+	return out, nil
+}
+
 func sameReplayPayload(entry Entry, input AppendEntryInput) bool {
 	return entry.EventType == input.EventType &&
 		entry.AccountID == input.AccountID &&
@@ -1049,6 +1062,25 @@ func cloneReconciliationReport(report ReconciliationReport) ReconciliationReport
 	}
 	report.Payload = cloneMap(report.Payload)
 	return report
+}
+
+func matchesKubernetesEvidenceSnapshot(snapshot KubernetesEvidenceSnapshot, filter KubernetesEvidenceSnapshotFilter) bool {
+	if filter.ClusterID != "" && snapshot.ClusterID != filter.ClusterID {
+		return false
+	}
+	if filter.Namespace != "" && snapshot.Namespace != filter.Namespace {
+		return false
+	}
+	if filter.ObjectKind != "" && snapshot.ObjectKind != filter.ObjectKind {
+		return false
+	}
+	if filter.ObjectName != "" && snapshot.ObjectName != filter.ObjectName {
+		return false
+	}
+	if filter.WorkspaceID != "" && snapshot.WorkspaceID != filter.WorkspaceID {
+		return false
+	}
+	return true
 }
 
 func matches(entry Entry, filter EntryFilter) bool {

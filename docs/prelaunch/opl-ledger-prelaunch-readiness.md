@@ -138,7 +138,7 @@ Implemented:
 - reconciliation report list API with provider/status filters;
 - reconciliation guard API for missing, stale, failed, and passing recent reports;
 - Tencent reconciliation primitive with raw bill row normalization, workspace tag extraction, missing workspace fail-closed, and mixed-currency fail-closed behavior;
-- read-only Deployment evidence collector primitive with PostgreSQL persistence for redacted Kubernetes evidence snapshots;
+- read-only Deployment evidence collector primitive plus external Kubernetes evidence snapshot append/list API with PostgreSQL persistence for redacted snapshots;
 - service-to-service Bearer token authentication for mutating endpoints and admin Bearer token authorization for operator evidence reads when tokens are configured;
 - local-only shadow mode comparison procedure and safety rules;
 - local data migration dry-run mapping and required report format;
@@ -148,7 +148,6 @@ Implemented:
 
 Not complete:
 
-- external Kubernetes evidence snapshot API;
 - Console/Fabric integration;
 - executed and approved data migration from current Console state.
 

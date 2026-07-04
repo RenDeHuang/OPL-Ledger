@@ -648,8 +648,53 @@ Response:
 ]
 ```
 
+### `POST /api/v1/ledger/kubernetes-evidence-snapshots`
+
+Purpose: persist an externally collected, read-only Kubernetes object evidence snapshot. Ledger does not mutate Kubernetes objects and does not fetch cloud state through this API; Fabric or an approved collector submits already-redacted evidence.
+
+Authorization: mutating endpoint; when `OPL_LEDGER_SERVICE_TOKEN` is configured, callers must send `Authorization: Bearer <service-token>`.
+
+Request:
+
+```json
+{
+  "clusterId": "cluster_1",
+  "namespace": "opl-cloud",
+  "objectKind": "Deployment",
+  "objectName": "opl-ws-1",
+  "workspaceId": "ws_1",
+  "resourceVersion": "42",
+  "observedGeneration": 7,
+  "readinessStatus": "ready",
+  "redactedObject": {
+    "kind": "Deployment",
+    "name": "opl-ws-1",
+    "readyReplicas": 1
+  }
+}
+```
+
+Persistence requirements:
+
+- `kubernetes_evidence_snapshots` stores cluster, namespace, object kind/name, workspace id, resource version, observed generation, readiness status, redacted object JSON, and collection timestamp.
+- If `collectedAt` is omitted, Ledger sets it to server UTC time.
+- Snapshot payloads must be redacted before submission; tests cover that persisted examples do not contain secret values.
+
+### `GET /api/v1/ledger/kubernetes-evidence-snapshots`
+
+Purpose: list stored Kubernetes evidence snapshots for operator review, shadow-mode comparison, and cutover evidence.
+
+Authorization: operator evidence read; when `OPL_LEDGER_ADMIN_TOKEN` is configured, callers must send `Authorization: Bearer <admin-token>`.
+
+Filters:
+
+- `clusterId`
+- `namespace`
+- `objectKind`
+- `objectName`
+- `workspaceId`
+
 ## Planned
 
 - Wallet read API.
 - Reconciliation guard API.
-- Kubernetes evidence snapshot API. Read-only collector and PostgreSQL persistence primitives are implemented locally; external API wiring is still planned.
