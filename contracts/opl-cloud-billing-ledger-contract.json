@@ -115,6 +115,7 @@
   },
   "manualTopUpPolicy": {
     "endpoint": "POST /api/v1/billing/topups",
+    "readEndpoint": "GET /api/v1/billing/topups",
     "idempotencyField": "sourceEventId",
     "legacyFallback": "reason",
     "reasonField": "reason",

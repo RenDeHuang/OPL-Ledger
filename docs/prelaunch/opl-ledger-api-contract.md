@@ -73,6 +73,23 @@ Persistence requirements:
 - `audit_events` records `account.credit_granted`.
 - PostgreSQL path performs these writes in one SQL transaction.
 
+### `GET /api/v1/billing/topups`
+
+Purpose: list manual top-up records for Console/admin review and migration reconciliation.
+
+Status: implemented for in-memory and PostgreSQL stores.
+
+Authorization: operator evidence read; when `OPL_LEDGER_ADMIN_TOKEN` is configured, callers must send `Authorization: Bearer <admin-token>`.
+
+Filters:
+
+- `accountId`
+- `userId`
+- `operatorUserId`
+- `operatorAccountId`
+- `sourceEventId`
+- `status`
+
 ### `GET /api/v1/billing/wallet-transactions`
 
 Purpose: list wallet money movement records for operator review, Console billing history, and reconciliation investigation.

@@ -59,6 +59,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/ledger/entries", s.listEntries)
 	s.mux.HandleFunc("GET /api/v1/ledger/summary", s.summary)
 	s.mux.HandleFunc("GET /api/v1/billing/wallet-transactions", s.listWalletTransactions)
+	s.mux.HandleFunc("GET /api/v1/billing/topups", s.listManualTopUps)
 	s.mux.HandleFunc("POST /api/v1/billing/topups", s.manualTopUp)
 	s.mux.HandleFunc("POST /api/v1/billing/holds", s.createHold)
 	s.mux.HandleFunc("POST /api/v1/billing/holds/release", s.releaseHolds)
@@ -138,6 +139,18 @@ func (s *Server) listWalletTransactions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, transactions)
+}
+
+func (s *Server) listManualTopUps(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	topups, err := s.store.ListManualTopUps(r.Context(), manualTopUpFilterFromQuery(r))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, topups)
 }
 
 func (s *Server) manualTopUp(w http.ResponseWriter, r *http.Request) {
@@ -602,6 +615,18 @@ func walletTransactionFilterFromQuery(r *http.Request) ledger.WalletTransactionF
 		LedgerEntryID: q.Get("ledgerEntryId"),
 		UsageLogID:    q.Get("usageLogId"),
 		FundingSource: q.Get("fundingSource"),
+	}
+}
+
+func manualTopUpFilterFromQuery(r *http.Request) ledger.ManualTopUpFilter {
+	q := r.URL.Query()
+	return ledger.ManualTopUpFilter{
+		AccountID:         q.Get("accountId"),
+		UserID:            q.Get("userId"),
+		OperatorUserID:    q.Get("operatorUserId"),
+		OperatorAccountID: q.Get("operatorAccountId"),
+		SourceEventID:     q.Get("sourceEventId"),
+		Status:            q.Get("status"),
 	}
 }
 

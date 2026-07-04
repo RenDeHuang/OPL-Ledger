@@ -326,6 +326,46 @@ func TestManualTopUpAPISeparatesSourceEventIDFromReason(t *testing.T) {
 	}
 }
 
+func TestListManualTopUpsFiltersByAccountAndSourceEvent(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	first := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":25000,
+		"sourceEventId":"console_manual_topup_1",
+		"reason":"initial launch credit"
+	}`))
+	if first.code != http.StatusCreated {
+		t.Fatalf("first topup status = %d body=%s", first.code, first.body)
+	}
+	second := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_2",
+		"userId":"usr_2",
+		"amountCents":15000,
+		"sourceEventId":"console_manual_topup_2",
+		"reason":"second account credit"
+	}`))
+	if second.code != http.StatusCreated {
+		t.Fatalf("second topup status = %d body=%s", second.code, second.body)
+	}
+
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/billing/topups?accountId=acct_1&sourceEventId=console_manual_topup_1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list topups status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var topups []ledger.ManualTopUp
+	if err := json.Unmarshal(rec.Body.Bytes(), &topups); err != nil {
+		t.Fatalf("decode topups: %v", err)
+	}
+	if len(topups) != 1 {
+		t.Fatalf("expected 1 topup, got %d: %+v", len(topups), topups)
+	}
+	if topups[0].SourceEventID != "console_manual_topup_1" || topups[0].Reason != "initial launch credit" {
+		t.Fatalf("unexpected topup: %+v", topups[0])
+	}
+}
+
 func TestRequestUsageAPIAppendsIdempotentRequestDebit(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	topup := httptest.NewRecorder()

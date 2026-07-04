@@ -18,3 +18,25 @@ func manualTopUpReason(input ManualTopUpInput, sourceEventID string) string {
 	}
 	return sourceEventID
 }
+
+func matchesManualTopUp(topup ManualTopUp, filter ManualTopUpFilter) bool {
+	if filter.AccountID != "" && topup.TargetAccountID != filter.AccountID {
+		return false
+	}
+	if filter.UserID != "" && topup.TargetUserID != filter.UserID {
+		return false
+	}
+	if filter.OperatorUserID != "" && topup.OperatorUserID != filter.OperatorUserID {
+		return false
+	}
+	if filter.OperatorAccountID != "" && topup.OperatorAccountID != filter.OperatorAccountID {
+		return false
+	}
+	if filter.SourceEventID != "" && topup.SourceEventID != filter.SourceEventID {
+		return false
+	}
+	if filter.Status != "" && topup.Status != filter.Status {
+		return false
+	}
+	return true
+}

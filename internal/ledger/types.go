@@ -171,6 +171,15 @@ type ManualTopUp struct {
 	CreatedAt           time.Time `json:"createdAt"`
 }
 
+type ManualTopUpFilter struct {
+	AccountID         string
+	UserID            string
+	OperatorUserID    string
+	OperatorAccountID string
+	SourceEventID     string
+	Status            string
+}
+
 type HoldInput struct {
 	AccountID     string         `json:"accountId"`
 	UserID        string         `json:"userId,omitempty"`

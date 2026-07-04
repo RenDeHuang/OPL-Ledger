@@ -74,6 +74,15 @@ curl -i http://127.0.0.1:8788/api/v1/audit/events?accountId=acct_local \
 
 Expected: `200`.
 
+Verify manual top-up history:
+
+```bash
+curl -i 'http://127.0.0.1:8788/api/v1/billing/topups?accountId=acct_local&sourceEventId=local_topup_1' \
+  -H 'authorization: Bearer local-admin-token'
+```
+
+Expected: `200` with one `manual_topup` record for `local_topup_1`.
+
 ## No Cloud Upload Or Deploy
 
 Pre-launch verification does not include:

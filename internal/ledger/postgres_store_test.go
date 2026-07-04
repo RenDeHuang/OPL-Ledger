@@ -276,6 +276,34 @@ func TestPostgresStoreManualTopUpReplayReturnsExistingAccountingLoop(t *testing.
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreListManualTopUpsFiltersByAccountAndSourceEvent(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	topup := manualTopUpFixture("topup_1", "led_1", "wtx_1", "aud_1", createdAt)
+	topup.SourceEventID = "console_manual_topup_1"
+	topup.Reason = "initial launch credit"
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT payload FROM manual_topups WHERE account_id = $1 AND source_event_id = $2 ORDER BY created_at, id`)).
+		WithArgs("acct_1", "console_manual_topup_1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, topup)))
+
+	topups, err := store.ListManualTopUps(context.Background(), ManualTopUpFilter{
+		AccountID:     "acct_1",
+		SourceEventID: "console_manual_topup_1",
+	})
+	if err != nil {
+		t.Fatalf("list manual topups: %v", err)
+	}
+	if len(topups) != 1 {
+		t.Fatalf("expected 1 topup, got %d", len(topups))
+	}
+	if topups[0].SourceEventID != "console_manual_topup_1" || topups[0].Reason != "initial launch credit" {
+		t.Fatalf("unexpected topup: %+v", topups[0])
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreRecordRequestUsageWritesDedupAndDebitLoopInOneTransaction(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)
