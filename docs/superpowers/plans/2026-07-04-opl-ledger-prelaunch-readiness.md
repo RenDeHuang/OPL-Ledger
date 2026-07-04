@@ -151,8 +151,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/billing/pricing_test.go`
 - Create: `internal/billing/pricing.go`
 
-- [ ] Test 7-day compute and storage hold using `OPL_BILLING_MARKUP`.
-- [ ] Match `medopl-3` expected values for basic and pro packages.
+- [x] Test 7-day compute and storage hold using `OPL_BILLING_MARKUP`.
+- [x] Match `medopl-3` expected values for basic and pro packages.
 
 ### Task 13: Implement Hold Creation
 

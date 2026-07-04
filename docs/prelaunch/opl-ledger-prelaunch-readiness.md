@@ -124,6 +124,7 @@ Implemented:
 - wallet snapshot PostgreSQL table;
 - manual top-up API with wallet snapshot, credit ledger entry, wallet transaction, manual topup record, and audit event in one PostgreSQL transaction;
 - request usage API with quota check, dedup-first PostgreSQL transaction, available-balance debit, usage log, wallet transaction, and audit event;
+- 7-day compute/storage prepaid hold pricing calculation for Basic and Pro package inputs;
 - task receipt record/query;
 - reconciliation submit/latest;
 - Tencent reconciliation primitive;

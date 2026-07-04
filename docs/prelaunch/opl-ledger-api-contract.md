@@ -139,7 +139,7 @@ Persistence requirements:
 
 - Wallet read API.
 - Wallet transaction list API.
-- Compute/storage hold create/release APIs.
+- Compute/storage hold create/release APIs. Pricing calculation is implemented locally: 7-day hold, `OPL_BILLING_MARKUP`, package compute hourly price, package disk GB, and `OPL_STORAGE_GB_MONTH_CNY`, rounded to integer cents.
 - Hourly settlement API.
 - Reconciliation guard API.
 - Audit event append/list API.
