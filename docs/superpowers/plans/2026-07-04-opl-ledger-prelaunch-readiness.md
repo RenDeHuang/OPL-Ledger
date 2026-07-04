@@ -306,9 +306,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 **Files:**
 - Create: `docs/prelaunch/data-migration-dry-run.md`
 
-- [ ] Map `medopl-3` billing ledger rows to `opl-ledger` rows.
-- [ ] Map wallet transactions, manual topups, request usage, resource usage, audit, and evidence.
-- [ ] Require local dry-run output before any real migration.
+- [x] Map `medopl-3` billing ledger rows to `opl-ledger` rows.
+- [x] Map wallet transactions, manual topups, request usage, resource usage, audit, and evidence.
+- [x] Require local dry-run output before any real migration.
 
 ### Task 29: Add Cutover and Rollback Checklists
 

@@ -138,6 +138,7 @@ Implemented:
 - read-only Deployment evidence collector primitive with PostgreSQL persistence for redacted Kubernetes evidence snapshots;
 - service-to-service Bearer token authentication for mutating endpoints and admin Bearer token authorization for operator evidence reads when tokens are configured;
 - local-only shadow mode comparison procedure and safety rules;
+- local data migration dry-run mapping and required report format;
 - React + TypeScript operator UI baseline.
 
 Not complete:
@@ -149,7 +150,7 @@ Not complete:
 - resource usage log API/PostgreSQL transaction wiring;
 - external Kubernetes evidence snapshot API;
 - Console/Fabric integration;
-- data migration from current Console state.
+- executed and approved data migration from current Console state.
 
 ## Completion Steps
 
