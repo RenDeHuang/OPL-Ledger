@@ -3,12 +3,14 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
 func TestPostgresStoreAppendEntryCreatesPersistentLedgerRow(t *testing.T) {
@@ -129,6 +131,100 @@ func TestPostgresStoreListEntriesFiltersByAccountAndWorkspace(t *testing.T) {
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreManualTopUpWritesAccountingLoopInOneTransaction(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id, source_event_id, request_fingerprint, amount_cents, currency, created_at FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`)).
+		WithArgs("owner_credit_1", "").
+		WillReturnRows(ledgerEntryRows())
+	mock.ExpectQuery(`SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds`).
+		WithArgs("acct_1").
+		WillReturnRows(walletRows())
+	mock.ExpectExec(`INSERT INTO ledger_entries`).
+		WithArgs(sqlmock.AnyArg(), "credit", "acct_1", "usr_1", "account", "", "", "", "owner_credit_1", "", int64(25000), "CNY", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallet_transactions`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "account", "credit", int64(25000), "CNY", "owner_credit_1", sqlmock.AnyArg(), "", "", int64(0), int64(25000), int64(0), int64(0), int64(25000), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO audit_events`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "", "usr_admin", "account.credit_granted", "manual_topup", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO manual_topups`).
+		WithArgs(sqlmock.AnyArg(), "acct_1", "usr_1", "usr_admin", "acct_admin", "usr_1", "acct_1", "owner_credit_1", int64(25000), "CNY", "completed", int64(0), int64(25000), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(sqlmock.AnyArg(), "usr_1", "acct_1", int64(25000), int64(0), int64(25000), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := store.ManualTopUp(context.Background(), ManualTopUpInput{
+		AccountID:         "acct_1",
+		UserID:            "usr_1",
+		AmountCents:       25000,
+		Reason:            "owner_credit_1",
+		OperatorUserID:    "usr_admin",
+		OperatorAccountID: "acct_admin",
+	})
+	if err != nil {
+		t.Fatalf("manual topup: %v", err)
+	}
+	if !result.Created {
+		t.Fatalf("expected created result")
+	}
+	if result.Wallet.BalanceCents != 25000 || result.Transaction.LedgerEntryID != result.Entry.ID || result.TopUp.AuditEventID != result.AuditEvent.ID {
+		t.Fatalf("unexpected accounting result: %+v", result)
+	}
+	assertSQLExpectations(t, mock)
+}
+
+func TestPostgresStoreManualTopUpReplayReturnsExistingAccountingLoop(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	transaction := walletTransactionFixture(t, "wtx_1", "led_1", "owner_credit_1", createdAt)
+	topup := manualTopUpFixture("topup_1", "led_1", transaction.ID, "aud_1", createdAt)
+	audit := auditFixture("aud_1", topup.ID, createdAt)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id, source_event_id, request_fingerprint, amount_cents, currency, created_at FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`)).
+		WithArgs("owner_credit_1", "").
+		WillReturnRows(ledgerEntryRows().AddRow("led_1", "credit", "acct_1", "usr_1", "account", "", "", "", "owner_credit_1", "", int64(25000), "CNY", createdAt))
+	mock.ExpectQuery(`SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds`).
+		WithArgs("acct_1").
+		WillReturnRows(walletRows().AddRow("wal_1", "usr_1", "acct_1", int64(25000), int64(0), int64(25000), []byte(`{}`), createdAt, createdAt))
+	mock.ExpectQuery(`SELECT payload\s+FROM wallet_transactions`).
+		WithArgs("owner_credit_1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, transaction)))
+	mock.ExpectQuery(`SELECT payload\s+FROM manual_topups`).
+		WithArgs("owner_credit_1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, topup)))
+	mock.ExpectQuery(`SELECT payload\s+FROM audit_events`).
+		WithArgs(topup.ID).
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, audit)))
+	mock.ExpectCommit()
+
+	result, err := store.ManualTopUp(context.Background(), ManualTopUpInput{
+		AccountID:         "acct_1",
+		UserID:            "usr_1",
+		AmountCents:       25000,
+		Reason:            "owner_credit_1",
+		OperatorUserID:    "usr_admin",
+		OperatorAccountID: "acct_admin",
+	})
+	if err != nil {
+		t.Fatalf("manual topup replay: %v", err)
+	}
+	if result.Created {
+		t.Fatalf("expected replay result")
+	}
+	if result.Wallet.BalanceCents != 25000 || result.Entry.ID != "led_1" || result.Transaction.ID != "wtx_1" || result.TopUp.ID != "topup_1" || result.AuditEvent.ID != "aud_1" {
+		t.Fatalf("unexpected replay result: %+v", result)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
@@ -157,6 +253,83 @@ func ledgerEntryRows() *sqlmock.Rows {
 		"currency",
 		"created_at",
 	})
+}
+
+func walletRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"id",
+		"user_id",
+		"account_id",
+		"balance_cents",
+		"frozen_cents",
+		"total_recharged_cents",
+		"holds",
+		"created_at",
+		"updated_at",
+	})
+}
+
+func walletTransactionFixture(t *testing.T, id string, ledgerEntryID string, sourceEventID string, createdAt time.Time) wallet.Transaction {
+	t.Helper()
+	return wallet.Transaction{
+		ID:                  id,
+		UserID:              "usr_1",
+		AccountID:           "acct_1",
+		WorkspaceID:         "account",
+		Type:                wallet.TransactionCredit,
+		AmountCents:         25000,
+		Currency:            "CNY",
+		SourceEventID:       sourceEventID,
+		LedgerEntryID:       ledgerEntryID,
+		BalanceBeforeCents:  0,
+		BalanceAfterCents:   25000,
+		FrozenBeforeCents:   0,
+		FrozenAfterCents:    0,
+		AvailableAfterCents: 25000,
+		CreatedAt:           createdAt,
+	}
+}
+
+func manualTopUpFixture(id string, ledgerEntryID string, transactionID string, auditID string, createdAt time.Time) ManualTopUp {
+	return ManualTopUp{
+		ID:                  id,
+		OperatorUserID:      "usr_admin",
+		OperatorAccountID:   "acct_admin",
+		TargetUserID:        "usr_1",
+		TargetAccountID:     "acct_1",
+		AmountCents:         25000,
+		Currency:            "CNY",
+		Reason:              "owner_credit_1",
+		Status:              "completed",
+		BalanceBeforeCents:  0,
+		BalanceAfterCents:   25000,
+		LedgerEntryID:       ledgerEntryID,
+		WalletTransactionID: transactionID,
+		AuditEventID:        auditID,
+		CreatedAt:           createdAt,
+	}
+}
+
+func auditFixture(id string, sourceEventID string, createdAt time.Time) AuditEvent {
+	return AuditEvent{
+		ID:            id,
+		AccountID:     "acct_1",
+		ActorID:       "usr_admin",
+		Action:        "account.credit_granted",
+		TargetKind:    "manual_topup",
+		TargetID:      sourceEventID,
+		SourceEventID: sourceEventID,
+		CreatedAt:     createdAt,
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+	return payload
 }
 
 func assertSQLExpectations(t *testing.T, mock sqlmock.Sqlmock) {

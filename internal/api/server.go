@@ -87,39 +87,12 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) manualTopUp(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		AccountID         string `json:"accountId"`
-		UserID            string `json:"userId"`
-		AmountCents       int64  `json:"amountCents"`
-		Reason            string `json:"reason"`
-		OperatorUserID    string `json:"operatorUserId"`
-		OperatorAccountID string `json:"operatorAccountId"`
-	}
+	var input ledger.ManualTopUpInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
 		return
 	}
-	if input.AccountID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_required"})
-		return
-	}
-	if input.AmountCents <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "positive_credit_required"})
-		return
-	}
-	sourceEventID := input.Reason
-	if sourceEventID == "" {
-		sourceEventID = "owner_credit"
-	}
-	result, err := s.store.AppendEntry(r.Context(), ledger.AppendEntryInput{
-		EventType:     "credit",
-		AccountID:     input.AccountID,
-		UserID:        input.UserID,
-		WorkspaceID:   "account",
-		SourceEventID: sourceEventID,
-		AmountCents:   input.AmountCents,
-		Currency:      "CNY",
-	})
+	result, err := s.store.ManualTopUp(r.Context(), input)
 	if err != nil {
 		writeAppendError(w, err)
 		return
@@ -128,7 +101,7 @@ func (s *Server) manualTopUp(w http.ResponseWriter, r *http.Request) {
 	if !result.Created {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, result.Entry)
+	writeJSON(w, status, result)
 }
 
 func (s *Server) recordRequestUsage(w http.ResponseWriter, r *http.Request) {

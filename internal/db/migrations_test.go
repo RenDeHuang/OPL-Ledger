@@ -60,6 +60,39 @@ func TestInitialMigrationDefinesWalletSnapshotTable(t *testing.T) {
 	}
 }
 
+func TestInitialMigrationDefinesWalletTransactionAndTopUpAuditFields(t *testing.T) {
+	sqlBytes, err := Migrations.ReadFile("migrations/0001_initial.sql")
+	if err != nil {
+		t.Fatalf("read initial migration: %v", err)
+	}
+	sql := string(sqlBytes)
+	required := []string{
+		"account_id TEXT",
+		"workspace_id TEXT",
+		"source_event_id TEXT",
+		"ledger_entry_id TEXT REFERENCES ledger_entries(id)",
+		"usage_log_id TEXT",
+		"funding_source TEXT",
+		"balance_before_cents BIGINT NOT NULL DEFAULT 0",
+		"balance_after_cents BIGINT NOT NULL DEFAULT 0",
+		"frozen_before_cents BIGINT NOT NULL DEFAULT 0",
+		"frozen_after_cents BIGINT NOT NULL DEFAULT 0",
+		"available_after_cents BIGINT NOT NULL DEFAULT 0",
+		"operator_account_id TEXT",
+		"target_user_id TEXT",
+		"target_account_id TEXT NOT NULL",
+		"wallet_transaction_id TEXT REFERENCES wallet_transactions(id)",
+		"status TEXT NOT NULL",
+		"CREATE UNIQUE INDEX IF NOT EXISTS manual_topups_source_event_idx",
+		"CREATE INDEX IF NOT EXISTS wallet_transactions_account_id_idx",
+	}
+	for _, needle := range required {
+		if !strings.Contains(sql, needle) {
+			t.Fatalf("migration missing %q", needle)
+		}
+	}
+}
+
 func TestInitialMigrationUsesTextIDsForGeneratedLedgerIDs(t *testing.T) {
 	sqlBytes, err := Migrations.ReadFile("migrations/0001_initial.sql")
 	if err != nil {

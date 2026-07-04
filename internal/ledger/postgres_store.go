@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
 type Store interface {
 	AppendEntry(context.Context, AppendEntryInput) (AppendEntryResult, error)
+	ManualTopUp(context.Context, ManualTopUpInput) (ManualTopUpResult, error)
 	ListEntries(context.Context, EntryFilter) ([]Entry, error)
 	Summary(context.Context, EntryFilter) (Summary, error)
 	AppendTaskReceipt(context.Context, TaskReceiptInput) (TaskReceipt, error)
@@ -128,6 +131,293 @@ func (s *PostgresStore) AppendEntry(ctx context.Context, input AppendEntryInput)
 	return AppendEntryResult{Entry: entry, Created: true}, nil
 }
 
+func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput) (ManualTopUpResult, error) {
+	if input.AccountID == "" {
+		return ManualTopUpResult{}, errors.New("account_required")
+	}
+	if input.AmountCents <= 0 {
+		return ManualTopUpResult{}, errors.New("positive_credit_required")
+	}
+	sourceEventID := input.Reason
+	if sourceEventID == "" {
+		sourceEventID = "owner_credit"
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	existing, err := s.entriesForIdempotencyKeys(ctx, tx, AppendEntryInput{SourceEventID: sourceEventID})
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	if len(existing) > 1 {
+		return ManualTopUpResult{}, ErrIdempotencyConflict
+	}
+	if len(existing) == 1 {
+		entry := existing[0]
+		replayUserID := input.UserID
+		if replayUserID == "" {
+			replayUserID = entry.UserID
+		}
+		replay := AppendEntryInput{
+			EventType:     "credit",
+			AccountID:     input.AccountID,
+			UserID:        replayUserID,
+			WorkspaceID:   "account",
+			SourceEventID: sourceEventID,
+			AmountCents:   input.AmountCents,
+			Currency:      "CNY",
+		}
+		if !sameReplayPayload(entry, replay) {
+			return ManualTopUpResult{}, ErrIdempotencyConflict
+		}
+		result, err := s.loadManualTopUpResult(ctx, tx, input.AccountID, sourceEventID, entry)
+		if err != nil {
+			return ManualTopUpResult{}, err
+		}
+		result.Created = false
+		if err := tx.Commit(); err != nil {
+			return ManualTopUpResult{}, err
+		}
+		committed = true
+		return result, nil
+	}
+
+	w, found, err := s.walletForUpdate(ctx, tx, input.AccountID)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	if !found {
+		w = wallet.Wallet{
+			UserID:    input.UserID,
+			AccountID: input.AccountID,
+			Holds:     map[string]int64{},
+		}
+		if w.UserID == "" {
+			w.UserID = "usr-" + input.AccountID
+		}
+	}
+	before := w.Snapshot()
+	w.Credit(input.AmountCents)
+	after := w.Snapshot()
+	createdAt := nowUTC()
+
+	entry := Entry{
+		ID:            randomID(),
+		EventType:     "credit",
+		AccountID:     input.AccountID,
+		UserID:        w.UserID,
+		WorkspaceID:   "account",
+		SourceEventID: sourceEventID,
+		AmountCents:   input.AmountCents,
+		Currency:      "CNY",
+		CreatedAt:     createdAt,
+	}
+	entryPayload, err := json.Marshal(map[string]any{
+		"operatorUserId":    input.OperatorUserID,
+		"operatorAccountId": input.OperatorAccountID,
+	})
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO ledger_entries (
+			id, event_type, account_id, user_id, workspace_id, compute_id, storage_id, attachment_id,
+			source_event_id, request_fingerprint, amount_cents, currency, payload, created_at
+		) VALUES (
+			$1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''),
+			NULLIF($9, ''), NULLIF($10, ''), $11, $12, $13, $14
+		)`,
+		entry.ID,
+		entry.EventType,
+		entry.AccountID,
+		entry.UserID,
+		entry.WorkspaceID,
+		entry.ComputeID,
+		entry.StorageID,
+		entry.AttachmentID,
+		entry.SourceEventID,
+		entry.RequestFingerprint,
+		entry.AmountCents,
+		entry.Currency,
+		entryPayload,
+		entry.CreatedAt,
+	)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+
+	transaction := wallet.NewTransaction(wallet.TransactionInput{
+		UserID:              w.UserID,
+		AccountID:           input.AccountID,
+		WorkspaceID:         "account",
+		Type:                wallet.TransactionCredit,
+		AmountCents:         input.AmountCents,
+		Currency:            "CNY",
+		SourceEventID:       sourceEventID,
+		LedgerEntryID:       entry.ID,
+		BalanceBeforeCents:  before.BalanceCents,
+		BalanceAfterCents:   after.BalanceCents,
+		FrozenBeforeCents:   before.FrozenCents,
+		FrozenAfterCents:    after.FrozenCents,
+		AvailableAfterCents: after.AvailableCents,
+		Metadata: map[string]any{
+			"operatorUserId":    input.OperatorUserID,
+			"operatorAccountId": input.OperatorAccountID,
+		},
+		CreatedAt: createdAt,
+	})
+	transactionPayload, err := json.Marshal(transaction)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO wallet_transactions (
+			id, account_id, user_id, workspace_id, transaction_type, amount_cents, currency, source_event_id,
+			ledger_entry_id, usage_log_id, funding_source, balance_before_cents, balance_after_cents,
+			frozen_before_cents, frozen_after_cents, available_after_cents, payload, created_at
+		) VALUES (
+			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, NULLIF($8, ''),
+			NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), $12, $13, $14, $15, $16, $17, $18
+		)`,
+		transaction.ID,
+		transaction.AccountID,
+		transaction.UserID,
+		transaction.WorkspaceID,
+		string(transaction.Type),
+		transaction.AmountCents,
+		transaction.Currency,
+		transaction.SourceEventID,
+		transaction.LedgerEntryID,
+		transaction.UsageLogID,
+		transaction.FundingSource,
+		transaction.BalanceBeforeCents,
+		transaction.BalanceAfterCents,
+		transaction.FrozenBeforeCents,
+		transaction.FrozenAfterCents,
+		transaction.AvailableAfterCents,
+		transactionPayload,
+		transaction.CreatedAt,
+	)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+
+	topup := ManualTopUp{
+		ID:                  randomScopedID("topup"),
+		OperatorUserID:      input.OperatorUserID,
+		OperatorAccountID:   input.OperatorAccountID,
+		TargetUserID:        w.UserID,
+		TargetAccountID:     input.AccountID,
+		AmountCents:         input.AmountCents,
+		Currency:            "CNY",
+		Reason:              sourceEventID,
+		Status:              "completed",
+		BalanceBeforeCents:  before.BalanceCents,
+		BalanceAfterCents:   after.BalanceCents,
+		LedgerEntryID:       entry.ID,
+		WalletTransactionID: transaction.ID,
+		CreatedAt:           createdAt,
+	}
+	audit := AuditEvent{
+		ID:            randomScopedID("aud"),
+		AccountID:     input.AccountID,
+		ActorID:       input.OperatorUserID,
+		Action:        "account.credit_granted",
+		TargetKind:    "manual_topup",
+		TargetID:      topup.ID,
+		SourceEventID: topup.ID,
+		Payload: map[string]any{
+			"sourceEventId": sourceEventID,
+			"amountCents":   input.AmountCents,
+		},
+		CreatedAt: createdAt,
+	}
+	topup.AuditEventID = audit.ID
+	auditPayload, err := json.Marshal(audit)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO audit_events (
+			id, account_id, workspace_id, actor_id, action, target_kind, target_id, source_event_id, payload, created_at
+		) VALUES (
+			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9, $10
+		)`,
+		audit.ID,
+		audit.AccountID,
+		audit.WorkspaceID,
+		audit.ActorID,
+		audit.Action,
+		audit.TargetKind,
+		audit.TargetID,
+		audit.SourceEventID,
+		auditPayload,
+		audit.CreatedAt,
+	)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+
+	topupPayload, err := json.Marshal(topup)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO manual_topups (
+			id, account_id, user_id, operator_id, operator_account_id, target_user_id, target_account_id, source_event_id,
+			amount_cents, currency, status, balance_before_cents, balance_after_cents, ledger_entry_id,
+			wallet_transaction_id, audit_event_id, payload, created_at
+		) VALUES (
+			$1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''),
+			$9, $10, $11, $12, $13, NULLIF($14, ''), NULLIF($15, ''), NULLIF($16, ''), $17, $18
+		)`,
+		topup.ID,
+		topup.TargetAccountID,
+		topup.TargetUserID,
+		topup.OperatorUserID,
+		topup.OperatorAccountID,
+		topup.TargetUserID,
+		topup.TargetAccountID,
+		topup.Reason,
+		topup.AmountCents,
+		topup.Currency,
+		topup.Status,
+		topup.BalanceBeforeCents,
+		topup.BalanceAfterCents,
+		topup.LedgerEntryID,
+		topup.WalletTransactionID,
+		topup.AuditEventID,
+		topupPayload,
+		topup.CreatedAt,
+	)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	if err := s.upsertWallet(ctx, tx, w, after, createdAt); err != nil {
+		return ManualTopUpResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ManualTopUpResult{}, err
+	}
+	committed = true
+	return ManualTopUpResult{
+		Wallet:      after,
+		Entry:       entry,
+		Transaction: transaction,
+		TopUp:       topup,
+		AuditEvent:  audit,
+		Created:     true,
+	}, nil
+}
+
 func (s *PostgresStore) entriesForIdempotencyKeys(ctx context.Context, tx *sql.Tx, input AppendEntryInput) ([]Entry, error) {
 	rows, err := tx.QueryContext(ctx, selectLedgerEntryColumns+` FROM ledger_entries WHERE source_event_id = $1 OR request_fingerprint = $2 ORDER BY created_at LIMIT 2`, input.SourceEventID, input.RequestFingerprint)
 	if err != nil {
@@ -135,6 +425,177 @@ func (s *PostgresStore) entriesForIdempotencyKeys(ctx context.Context, tx *sql.T
 	}
 	defer rows.Close()
 	return scanEntries(rows)
+}
+
+func (s *PostgresStore) walletForUpdate(ctx context.Context, tx *sql.Tx, accountID string) (wallet.Wallet, bool, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds, created_at, updated_at
+		FROM wallets
+		WHERE account_id = $1
+		FOR UPDATE`,
+		accountID,
+	)
+	w, err := scanWallet(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return wallet.Wallet{}, false, nil
+	}
+	if err != nil {
+		return wallet.Wallet{}, false, err
+	}
+	return w, true, nil
+}
+
+func (s *PostgresStore) upsertWallet(ctx context.Context, tx *sql.Tx, w wallet.Wallet, snapshot wallet.Snapshot, timestamp time.Time) error {
+	holds, err := json.Marshal(snapshot.Holds)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO wallets (
+			id, user_id, account_id, balance_cents, frozen_cents, total_recharged_cents, holds, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7, $8, $9
+		)
+		ON CONFLICT (account_id) DO UPDATE SET
+			user_id = EXCLUDED.user_id,
+			balance_cents = EXCLUDED.balance_cents,
+			frozen_cents = EXCLUDED.frozen_cents,
+			total_recharged_cents = EXCLUDED.total_recharged_cents,
+			holds = EXCLUDED.holds,
+			updated_at = EXCLUDED.updated_at`,
+		randomScopedID("wal"),
+		w.UserID,
+		w.AccountID,
+		snapshot.BalanceCents,
+		snapshot.FrozenCents,
+		snapshot.TotalRechargedCents,
+		holds,
+		timestamp,
+		timestamp,
+	)
+	return err
+}
+
+func (s *PostgresStore) loadManualTopUpResult(ctx context.Context, tx *sql.Tx, accountID string, sourceEventID string, entry Entry) (ManualTopUpResult, error) {
+	w, _, err := s.walletForUpdate(ctx, tx, accountID)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	transaction, err := loadWalletTransactionBySource(ctx, tx, sourceEventID)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	topup, err := loadManualTopUpBySource(ctx, tx, sourceEventID)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	audit, err := loadAuditEventBySource(ctx, tx, topup.ID)
+	if err != nil {
+		return ManualTopUpResult{}, err
+	}
+	return ManualTopUpResult{
+		Wallet:      w.Snapshot(),
+		Entry:       entry,
+		Transaction: transaction,
+		TopUp:       topup,
+		AuditEvent:  audit,
+	}, nil
+}
+
+type walletScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanWallet(scanner walletScanner) (wallet.Wallet, error) {
+	var id string
+	var w wallet.Wallet
+	var frozen int64
+	var holdsBytes []byte
+	var createdAt time.Time
+	var updatedAt time.Time
+	err := scanner.Scan(
+		&id,
+		&w.UserID,
+		&w.AccountID,
+		&w.BalanceCents,
+		&frozen,
+		&w.TotalRechargedCents,
+		&holdsBytes,
+		&createdAt,
+		&updatedAt,
+	)
+	if err != nil {
+		return wallet.Wallet{}, err
+	}
+	if len(holdsBytes) > 0 {
+		if err := json.Unmarshal(holdsBytes, &w.Holds); err != nil {
+			return wallet.Wallet{}, err
+		}
+	}
+	if w.Holds == nil {
+		w.Holds = map[string]int64{}
+	}
+	return w, nil
+}
+
+func loadWalletTransactionBySource(ctx context.Context, tx *sql.Tx, sourceEventID string) (wallet.Transaction, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT payload
+		FROM wallet_transactions
+		WHERE source_event_id = $1
+		ORDER BY created_at, id
+		LIMIT 1`,
+		sourceEventID,
+	)
+	var payload []byte
+	if err := row.Scan(&payload); err != nil {
+		return wallet.Transaction{}, err
+	}
+	var transaction wallet.Transaction
+	if err := json.Unmarshal(payload, &transaction); err != nil {
+		return wallet.Transaction{}, err
+	}
+	return transaction, nil
+}
+
+func loadManualTopUpBySource(ctx context.Context, tx *sql.Tx, sourceEventID string) (ManualTopUp, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT payload
+		FROM manual_topups
+		WHERE source_event_id = $1
+		ORDER BY created_at, id
+		LIMIT 1`,
+		sourceEventID,
+	)
+	var payload []byte
+	if err := row.Scan(&payload); err != nil {
+		return ManualTopUp{}, err
+	}
+	var topup ManualTopUp
+	if err := json.Unmarshal(payload, &topup); err != nil {
+		return ManualTopUp{}, err
+	}
+	return topup, nil
+}
+
+func loadAuditEventBySource(ctx context.Context, tx *sql.Tx, sourceEventID string) (AuditEvent, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT payload
+		FROM audit_events
+		WHERE source_event_id = $1
+		ORDER BY created_at, id
+		LIMIT 1`,
+		sourceEventID,
+	)
+	var payload []byte
+	if err := row.Scan(&payload); err != nil {
+		return AuditEvent{}, err
+	}
+	var audit AuditEvent
+	if err := json.Unmarshal(payload, &audit); err != nil {
+		return AuditEvent{}, err
+	}
+	return audit, nil
 }
 
 func (s *PostgresStore) bindSourceEventPostgres(ctx context.Context, tx *sql.Tx, id string, sourceEventID string) error {

@@ -206,12 +206,83 @@ func TestManualTopUpAPIAppendsCreditLedgerEntry(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("topup status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var entry ledger.Entry
-	if err := json.Unmarshal(rec.Body.Bytes(), &entry); err != nil {
+	var result ledger.ManualTopUpResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode topup response: %v", err)
 	}
+	entry := result.Entry
 	if entry.EventType != "credit" || entry.AmountCents != 25000 || entry.SourceEventID != "owner_credit" {
 		t.Fatalf("unexpected topup entry: %+v", entry)
+	}
+}
+
+func TestManualTopUpAPIWritesWalletLedgerTransactionTopupAndAudit(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/topups", bytes.NewReader([]byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":25000,
+		"reason":"owner_credit_1",
+		"operatorUserId":"usr_admin",
+		"operatorAccountId":"acct_admin"
+	}`))))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result ledger.ManualTopUpResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode topup result: %v", err)
+	}
+	if !result.Created {
+		t.Fatalf("expected created result")
+	}
+	if result.Wallet.BalanceCents != 25000 || result.Wallet.AvailableCents != 25000 || result.Wallet.TotalRechargedCents != 25000 {
+		t.Fatalf("wallet snapshot = %+v", result.Wallet)
+	}
+	if result.Entry.EventType != "credit" || result.Entry.AmountCents != 25000 || result.Entry.SourceEventID != "owner_credit_1" {
+		t.Fatalf("ledger entry = %+v", result.Entry)
+	}
+	if result.Transaction.Type != "credit" || result.Transaction.AmountCents != 25000 || result.Transaction.LedgerEntryID != result.Entry.ID {
+		t.Fatalf("wallet transaction = %+v", result.Transaction)
+	}
+	if result.TopUp.TargetAccountID != "acct_1" || result.TopUp.WalletTransactionID != result.Transaction.ID || result.TopUp.LedgerEntryID != result.Entry.ID {
+		t.Fatalf("manual topup = %+v", result.TopUp)
+	}
+	if result.AuditEvent.Action != "account.credit_granted" || result.AuditEvent.SourceEventID != result.TopUp.ID {
+		t.Fatalf("audit event = %+v", result.AuditEvent)
+	}
+}
+
+func TestManualTopUpAPIReplayDoesNotDoubleCredit(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	body := []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":25000,
+		"reason":"owner_credit_1",
+		"operatorUserId":"usr_admin"
+	}`)
+
+	first := postManualTopUp(t, server, body)
+	if first.code != http.StatusCreated {
+		t.Fatalf("first status = %d body=%s", first.code, first.body)
+	}
+	second := postManualTopUp(t, server, body)
+	if second.code != http.StatusOK {
+		t.Fatalf("second status = %d body=%s", second.code, second.body)
+	}
+	if second.result.Created {
+		t.Fatalf("expected replay result")
+	}
+	if first.result.Entry.ID != second.result.Entry.ID {
+		t.Fatalf("expected same ledger entry, got %q and %q", first.result.Entry.ID, second.result.Entry.ID)
+	}
+	if first.result.Transaction.ID != second.result.Transaction.ID {
+		t.Fatalf("expected same wallet transaction, got %q and %q", first.result.Transaction.ID, second.result.Transaction.ID)
+	}
+	if second.result.Wallet.BalanceCents != 25000 || second.result.Wallet.TotalRechargedCents != 25000 {
+		t.Fatalf("wallet was double credited: %+v", second.result.Wallet)
 	}
 }
 
@@ -316,6 +387,12 @@ type ledgerAppendResponse struct {
 	entry ledger.Entry
 }
 
+type manualTopUpResponse struct {
+	code   int
+	body   string
+	result ledger.ManualTopUpResult
+}
+
 func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppendResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -324,6 +401,19 @@ func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppen
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.entry); err != nil {
 			t.Fatalf("decode append response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func postManualTopUp(t *testing.T, server http.Handler, body []byte) manualTopUpResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/billing/topups", bytes.NewReader(body)))
+	response := manualTopUpResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.result); err != nil {
+			t.Fatalf("decode topup response: %v body=%s", err, rec.Body.String())
 		}
 	}
 	return response

@@ -1,0 +1,118 @@
+# OPL Ledger API Contract
+
+Pre-launch contract for `OPL-Cloud` / `medopl-3` consumers. Production traffic remains on `medopl-3` until explicit cutover.
+
+## Mutating Endpoint Rules
+
+- All mutating endpoints must be idempotent.
+- `sourceEventId`, `requestFingerprint`, or endpoint-specific source fields are part of the replay contract.
+- Exact replay returns `200 OK` and the existing record.
+- Conflicting replay returns `409 Conflict`.
+- Amounts are integer cents in `CNY`; no floating point money values.
+
+## Implemented
+
+### `POST /api/v1/billing/topups`
+
+Purpose: manual wallet credit from Console/admin operation.
+
+Source behavior: `/home/dev/medopl-3/packages/console/src/services/billing-service.js#manualTopUp`.
+
+Idempotency: `reason` is used as the top-up source event id. If omitted, the source event id is `owner_credit`.
+
+Request:
+
+```json
+{
+  "accountId": "acct_1",
+  "userId": "usr_1",
+  "amountCents": 25000,
+  "reason": "owner_credit_1",
+  "operatorUserId": "usr_admin",
+  "operatorAccountId": "acct_admin"
+}
+```
+
+Response:
+
+```json
+{
+  "created": true,
+  "wallet": {
+    "userId": "usr_1",
+    "accountId": "acct_1",
+    "balanceCents": 25000,
+    "frozenCents": 0,
+    "availableCents": 25000,
+    "holds": {},
+    "totalRechargedCents": 25000
+  },
+  "entry": {},
+  "transaction": {},
+  "topUp": {},
+  "auditEvent": {}
+}
+```
+
+Persistence requirements:
+
+- `wallets` snapshot is updated.
+- `ledger_entries` receives a `credit` entry.
+- `wallet_transactions` receives a `credit` transaction with before/after balances and `ledgerEntryId`.
+- `manual_topups` records operator, target account/user, before/after balances, ledger id, wallet transaction id, and audit id.
+- `audit_events` records `account.credit_granted`.
+- PostgreSQL path performs these writes in one SQL transaction.
+
+### `POST /api/v1/ledger/entries`
+
+Purpose: append low-level ledger entry.
+
+Status: implemented as a compatibility primitive. Prefer domain endpoints for billing workflows.
+
+Idempotency: `sourceEventId` or `requestFingerprint`.
+
+### `GET /api/v1/ledger/entries`
+
+Purpose: list ledger entries by account, user, workspace, resource, or source event.
+
+### `GET /api/v1/ledger/summary`
+
+Purpose: summarize ledger entry amount totals.
+
+### `POST /api/v1/billing/reconciliation`
+
+Purpose: store a Tencent reconciliation report generated from supplied rows.
+
+### `GET /api/v1/billing/reconciliation/latest`
+
+Purpose: return latest stored reconciliation report.
+
+### `POST /api/v1/ledger/task-receipts`
+
+Purpose: record task evidence receipt.
+
+Status: implemented, idempotency still planned.
+
+### `GET /api/v1/ledger/task-receipts`
+
+Purpose: list task receipts by account/workspace/task.
+
+## Partial
+
+### `POST /api/v1/billing/request-usage`
+
+Purpose: record request usage and debit available wallet balance.
+
+Current status: partial. It appends an idempotent `request_debit` ledger entry, but the complete SQL transaction still needs request usage dedup row, quota check, wallet mutation, wallet transaction, and audit event.
+
+## Planned
+
+- Wallet read API.
+- Wallet transaction list API.
+- Request usage complete transaction and quota rejection.
+- Compute/storage hold create/release APIs.
+- Hourly settlement API.
+- Reconciliation guard API.
+- Audit event append/list API.
+- Evidence record append/list API.
+- Kubernetes evidence snapshot API.

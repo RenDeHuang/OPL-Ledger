@@ -120,7 +120,9 @@ Implemented:
 - PostgreSQL migration runner;
 - PostgreSQL store for ledger entries, task receipts, and reconciliation reports;
 - idempotent ledger entry append/list/summary;
-- simplified top-up API;
+- wallet balance/frozen/hold arithmetic;
+- wallet snapshot PostgreSQL table;
+- manual top-up API with wallet snapshot, credit ledger entry, wallet transaction, manual topup record, and audit event in one PostgreSQL transaction;
 - simplified request usage API;
 - task receipt record/query;
 - reconciliation submit/latest;
@@ -130,9 +132,7 @@ Implemented:
 
 Not complete:
 
-- wallet balance/frozen/holds as first-class persisted state;
-- wallet transactions as a complete timeline;
-- manual top-up record with operator, before/after balance, ledger id, transaction id, and audit id;
+- wallet transaction listing and reconciliation queries;
 - request usage dedup table and quota mutation in one SQL transaction;
 - compute/storage prepaid hold creation/capture/release;
 - settlement for compute/storage hourly billing;
@@ -191,4 +191,3 @@ Cutover is blocked until all of these are true:
 - data migration has been tested locally;
 - rollback is documented;
 - production secret and cloud changes have explicit human approval.
-

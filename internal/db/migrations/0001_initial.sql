@@ -25,10 +25,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ledger_entries_request_fingerprint_idx
 
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
+  account_id TEXT,
+  workspace_id TEXT,
   actor_id TEXT,
   action TEXT NOT NULL,
   target_kind TEXT NOT NULL,
   target_id TEXT,
+  source_event_id TEXT,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -100,25 +103,53 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   id TEXT PRIMARY KEY,
   account_id TEXT,
   user_id TEXT,
+  workspace_id TEXT,
   transaction_type TEXT NOT NULL,
   amount_cents BIGINT NOT NULL,
   currency TEXT NOT NULL DEFAULT 'CNY',
+  source_event_id TEXT,
   ledger_entry_id TEXT REFERENCES ledger_entries(id),
+  usage_log_id TEXT,
+  funding_source TEXT,
+  balance_before_cents BIGINT NOT NULL DEFAULT 0,
+  balance_after_cents BIGINT NOT NULL DEFAULT 0,
+  frozen_before_cents BIGINT NOT NULL DEFAULT 0,
+  frozen_after_cents BIGINT NOT NULL DEFAULT 0,
+  available_after_cents BIGINT NOT NULL DEFAULT 0,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS wallet_transactions_account_id_idx
+  ON wallet_transactions(account_id);
+
+CREATE INDEX IF NOT EXISTS wallet_transactions_source_event_idx
+  ON wallet_transactions(source_event_id);
 
 CREATE TABLE IF NOT EXISTS manual_topups (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
   user_id TEXT,
   operator_id TEXT NOT NULL,
+  operator_account_id TEXT,
+  target_user_id TEXT,
+  target_account_id TEXT NOT NULL,
+  source_event_id TEXT,
   amount_cents BIGINT NOT NULL,
   currency TEXT NOT NULL DEFAULT 'CNY',
+  status TEXT NOT NULL,
+  balance_before_cents BIGINT NOT NULL DEFAULT 0,
+  balance_after_cents BIGINT NOT NULL DEFAULT 0,
+  ledger_entry_id TEXT REFERENCES ledger_entries(id),
+  wallet_transaction_id TEXT REFERENCES wallet_transactions(id),
   audit_event_id TEXT REFERENCES audit_events(id),
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS manual_topups_source_event_idx
+  ON manual_topups(source_event_id)
+  WHERE source_event_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS billing_reconciliation_reports (
   id TEXT PRIMARY KEY,

@@ -67,10 +67,10 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 **Files:**
 - Create: `docs/prelaunch/opl-ledger-api-contract.md`
 
-- [ ] Define external API paths.
-- [ ] Mark each endpoint as `implemented`, `partial`, or `planned`.
-- [ ] Map each endpoint to the `medopl-3` source behavior.
-- [ ] Include idempotency requirements for mutating endpoints.
+- [x] Define external API paths.
+- [x] Mark each endpoint as `implemented`, `partial`, or `planned`.
+- [x] Map each endpoint to the `medopl-3` source behavior.
+- [x] Include idempotency requirements for mutating endpoints.
 
 ### Task 5: Split Wallet Package
 
@@ -79,8 +79,8 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/wallet/wallet_test.go`
 - Create: `internal/wallet/wallet.go`
 
-- [ ] Test wallet snapshot fields: `balanceCents`, `frozenCents`, `holds`, `availableCents`, `totalRechargedCents`.
-- [ ] Implement balance/frozen/hold arithmetic without floating point.
+- [x] Test wallet snapshot fields: `balanceCents`, `frozenCents`, `holds`, `availableCents`, `totalRechargedCents`.
+- [x] Implement balance/frozen/hold arithmetic without floating point.
 
 ### Task 6: Add Wallet PostgreSQL Tables
 
@@ -88,9 +88,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `internal/db/migrations/0001_initial.sql`
 - Modify: `internal/db/migrations_test.go`
 
-- [ ] Add `wallets`.
-- [ ] Add indexes by `account_id` and `user_id`.
-- [ ] Test migration contains wallet fields needed by `medopl-3`.
+- [x] Add `wallets`.
+- [x] Add indexes by `account_id` and `user_id`.
+- [x] Test migration contains wallet fields needed by `medopl-3`.
 
 ### Task 7: Implement Complete Manual Top-Up
 
@@ -101,9 +101,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `internal/ledger/postgres_store.go`
 - Modify: `internal/ledger/memory_store.go`
 
-- [ ] Test top-up writes wallet snapshot, ledger credit, wallet transaction, manual topup, and audit event.
-- [ ] Test replay by source event does not double-credit.
-- [ ] Implement one SQL transaction.
+- [x] Test top-up writes wallet snapshot, ledger credit, wallet transaction, manual topup, and audit event.
+- [x] Test replay by source event does not double-credit.
+- [x] Implement one SQL transaction.
 
 ### Task 8: Add Wallet Transactions
 
@@ -112,9 +112,9 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Create: `internal/wallet/transactions_test.go`
 - Create: `internal/wallet/transactions.go`
 
-- [ ] Test before/after balance and frozen fields.
-- [ ] Test transaction links to ledger entry id.
-- [ ] Test transaction type set includes credit, hold, debit, hold release, adjustment.
+- [x] Test before/after balance and frozen fields.
+- [x] Test transaction links to ledger entry id.
+- [x] Test transaction type set includes credit, hold, debit, hold release, adjustment.
 
 ### Task 9: Implement Request Usage Dedup
 
@@ -342,4 +342,3 @@ npm test --prefix web
 npm run build --prefix web
 git diff --check
 ```
-

@@ -7,21 +7,34 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
 type MemoryStore struct {
 	mu                    sync.Mutex
 	entries               []Entry
+	wallets               map[string]wallet.Wallet
+	walletTransactions    []wallet.Transaction
+	manualTopUps          []ManualTopUp
+	auditEvents           []AuditEvent
 	taskReceipts          []TaskReceipt
 	reconciliationReports []ReconciliationReport
 	bySourceEvent         map[string]Entry
 	byRequestFingerprint  map[string]Entry
+	topUpsBySourceEvent   map[string]ManualTopUp
+	transactionsBySource  map[string]wallet.Transaction
+	auditBySourceEvent    map[string]AuditEvent
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		bySourceEvent:        map[string]Entry{},
 		byRequestFingerprint: map[string]Entry{},
+		wallets:              map[string]wallet.Wallet{},
+		topUpsBySourceEvent:  map[string]ManualTopUp{},
+		transactionsBySource: map[string]wallet.Transaction{},
+		auditBySourceEvent:   map[string]AuditEvent{},
 	}
 }
 
@@ -103,6 +116,151 @@ func (s *MemoryStore) AppendEntry(_ context.Context, input AppendEntryInput) (Ap
 		s.byRequestFingerprint[entry.RequestFingerprint] = entry
 	}
 	return AppendEntryResult{Entry: entry, Created: true}, nil
+}
+
+func (s *MemoryStore) ManualTopUp(_ context.Context, input ManualTopUpInput) (ManualTopUpResult, error) {
+	if input.AccountID == "" {
+		return ManualTopUpResult{}, errors.New("account_required")
+	}
+	if input.AmountCents <= 0 {
+		return ManualTopUpResult{}, errors.New("positive_credit_required")
+	}
+	sourceEventID := input.Reason
+	if sourceEventID == "" {
+		sourceEventID = "owner_credit"
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if entry, ok := s.bySourceEvent[sourceEventID]; ok {
+		replay := AppendEntryInput{
+			EventType:     "credit",
+			AccountID:     input.AccountID,
+			UserID:        input.UserID,
+			WorkspaceID:   "account",
+			SourceEventID: sourceEventID,
+			AmountCents:   input.AmountCents,
+			Currency:      "CNY",
+		}
+		if !sameReplayPayload(entry, replay) {
+			return ManualTopUpResult{}, ErrIdempotencyConflict
+		}
+		topup, ok := s.topUpsBySourceEvent[sourceEventID]
+		if !ok {
+			return ManualTopUpResult{}, errors.New("manual_topup_record_missing")
+		}
+		transaction, ok := s.transactionsBySource[sourceEventID]
+		if !ok {
+			return ManualTopUpResult{}, errors.New("wallet_transaction_record_missing")
+		}
+		audit, ok := s.auditBySourceEvent[topup.ID]
+		if !ok {
+			return ManualTopUpResult{}, errors.New("audit_event_record_missing")
+		}
+		w := s.wallets[input.AccountID]
+		return ManualTopUpResult{
+			Wallet:      w.Snapshot(),
+			Entry:       entry,
+			Transaction: transaction,
+			TopUp:       topup,
+			AuditEvent:  audit,
+			Created:     false,
+		}, nil
+	}
+
+	w := s.wallets[input.AccountID]
+	if w.AccountID == "" {
+		w.AccountID = input.AccountID
+		w.UserID = input.UserID
+		if w.UserID == "" {
+			w.UserID = "usr-" + input.AccountID
+		}
+	}
+	before := w.Snapshot()
+	w.Credit(input.AmountCents)
+	after := w.Snapshot()
+
+	entry := Entry{
+		ID:            randomID(),
+		EventType:     "credit",
+		AccountID:     input.AccountID,
+		UserID:        w.UserID,
+		WorkspaceID:   "account",
+		SourceEventID: sourceEventID,
+		AmountCents:   input.AmountCents,
+		Currency:      "CNY",
+		CreatedAt:     time.Now().UTC(),
+	}
+	transaction := wallet.NewTransaction(wallet.TransactionInput{
+		UserID:              w.UserID,
+		AccountID:           input.AccountID,
+		WorkspaceID:         "account",
+		Type:                wallet.TransactionCredit,
+		AmountCents:         input.AmountCents,
+		Currency:            "CNY",
+		SourceEventID:       sourceEventID,
+		LedgerEntryID:       entry.ID,
+		BalanceBeforeCents:  before.BalanceCents,
+		BalanceAfterCents:   after.BalanceCents,
+		FrozenBeforeCents:   before.FrozenCents,
+		FrozenAfterCents:    after.FrozenCents,
+		AvailableAfterCents: after.AvailableCents,
+		Metadata: map[string]any{
+			"operatorUserId":    input.OperatorUserID,
+			"operatorAccountId": input.OperatorAccountID,
+		},
+	})
+	audit := AuditEvent{
+		ID:            randomScopedID("aud"),
+		AccountID:     input.AccountID,
+		ActorID:       input.OperatorUserID,
+		Action:        "account.credit_granted",
+		TargetKind:    "manual_topup",
+		SourceEventID: "",
+		Payload: map[string]any{
+			"sourceEventId": sourceEventID,
+			"amountCents":   input.AmountCents,
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+	topup := ManualTopUp{
+		ID:                  randomScopedID("topup"),
+		OperatorUserID:      input.OperatorUserID,
+		OperatorAccountID:   input.OperatorAccountID,
+		TargetUserID:        w.UserID,
+		TargetAccountID:     input.AccountID,
+		AmountCents:         input.AmountCents,
+		Currency:            "CNY",
+		Reason:              sourceEventID,
+		Status:              "completed",
+		BalanceBeforeCents:  before.BalanceCents,
+		BalanceAfterCents:   after.BalanceCents,
+		LedgerEntryID:       entry.ID,
+		WalletTransactionID: transaction.ID,
+		AuditEventID:        audit.ID,
+		CreatedAt:           time.Now().UTC(),
+	}
+	audit.TargetID = topup.ID
+	audit.SourceEventID = topup.ID
+
+	s.wallets[input.AccountID] = w
+	s.entries = append(s.entries, entry)
+	s.bySourceEvent[sourceEventID] = entry
+	s.walletTransactions = append(s.walletTransactions, transaction)
+	s.transactionsBySource[sourceEventID] = transaction
+	s.manualTopUps = append(s.manualTopUps, topup)
+	s.topUpsBySourceEvent[sourceEventID] = topup
+	s.auditEvents = append(s.auditEvents, audit)
+	s.auditBySourceEvent[audit.SourceEventID] = audit
+
+	return ManualTopUpResult{
+		Wallet:      after,
+		Entry:       entry,
+		Transaction: transaction,
+		TopUp:       topup,
+		AuditEvent:  audit,
+		Created:     true,
+	}, nil
 }
 
 func sameReplayPayload(entry Entry, input AppendEntryInput) bool {
@@ -318,7 +476,11 @@ func cloneMapSlice(value []map[string]any) []map[string]any {
 }
 
 func randomID() string {
+	return randomScopedID("led")
+}
+
+func randomScopedID(prefix string) string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
-	return "led_" + hex.EncodeToString(b[:])
+	return prefix + "_" + hex.EncodeToString(b[:])
 }
