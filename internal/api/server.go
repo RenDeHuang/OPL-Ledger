@@ -15,6 +15,7 @@ import (
 	"github.com/RenDeHuang/OPL-Ledger/internal/ownership"
 	"github.com/RenDeHuang/OPL-Ledger/internal/reconciliation"
 	"github.com/RenDeHuang/OPL-Ledger/internal/version"
+	"github.com/RenDeHuang/OPL-Ledger/internal/wallet"
 )
 
 type Server struct {
@@ -57,6 +58,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/ledger/entries", s.appendEntry)
 	s.mux.HandleFunc("GET /api/v1/ledger/entries", s.listEntries)
 	s.mux.HandleFunc("GET /api/v1/ledger/summary", s.summary)
+	s.mux.HandleFunc("GET /api/v1/billing/wallet-transactions", s.listWalletTransactions)
 	s.mux.HandleFunc("POST /api/v1/billing/topups", s.manualTopUp)
 	s.mux.HandleFunc("POST /api/v1/billing/holds", s.createHold)
 	s.mux.HandleFunc("POST /api/v1/billing/holds/release", s.releaseHolds)
@@ -119,6 +121,18 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *Server) listWalletTransactions(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	transactions, err := s.store.ListWalletTransactions(r.Context(), walletTransactionFilterFromQuery(r))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, transactions)
 }
 
 func (s *Server) manualTopUp(w http.ResponseWriter, r *http.Request) {
@@ -484,6 +498,24 @@ func filterFromQuery(r *http.Request) ledger.EntryFilter {
 		AttachmentID:  q.Get("attachmentId"),
 		SourceEventID: q.Get("sourceEventId"),
 	}
+}
+
+func walletTransactionFilterFromQuery(r *http.Request) ledger.WalletTransactionFilter {
+	q := r.URL.Query()
+	return ledger.WalletTransactionFilter{
+		AccountID:     q.Get("accountId"),
+		UserID:        q.Get("userId"),
+		WorkspaceID:   q.Get("workspaceId"),
+		Type:          walletTransactionType(q.Get("type")),
+		SourceEventID: q.Get("sourceEventId"),
+		LedgerEntryID: q.Get("ledgerEntryId"),
+		UsageLogID:    q.Get("usageLogId"),
+		FundingSource: q.Get("fundingSource"),
+	}
+}
+
+func walletTransactionType(value string) wallet.TransactionType {
+	return wallet.TransactionType(value)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

@@ -747,6 +747,19 @@ func (s *MemoryStore) RecordRequestUsage(_ context.Context, input RequestUsageIn
 	return result, nil
 }
 
+func (s *MemoryStore) ListWalletTransactions(_ context.Context, filter WalletTransactionFilter) ([]wallet.Transaction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []wallet.Transaction
+	for _, transaction := range s.walletTransactions {
+		if !matchesWalletTransaction(transaction, filter) {
+			continue
+		}
+		out = append(out, cloneWalletTransaction(transaction))
+	}
+	return out, nil
+}
+
 func (s *MemoryStore) AppendAuditEvent(_ context.Context, input AuditEventInput) (AuditEvent, error) {
 	event, err := auditlog.NewEvent(input)
 	if err != nil {

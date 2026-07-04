@@ -70,6 +70,49 @@ Persistence requirements:
 - `audit_events` records `account.credit_granted`.
 - PostgreSQL path performs these writes in one SQL transaction.
 
+### `GET /api/v1/billing/wallet-transactions`
+
+Purpose: list wallet money movement records for operator review, Console billing history, and reconciliation investigation.
+
+Status: implemented for in-memory and PostgreSQL stores.
+
+Authorization: operator evidence read; when `OPL_LEDGER_ADMIN_TOKEN` is configured, callers must send `Authorization: Bearer <admin-token>`.
+
+Filters:
+
+- `accountId`
+- `userId`
+- `workspaceId`
+- `type`: `credit`, `hold`, `debit`, `hold_release`, or `adjustment`
+- `sourceEventId`
+- `ledgerEntryId`
+- `usageLogId`
+- `fundingSource`
+
+Response:
+
+```json
+[
+  {
+    "id": "wtx_...",
+    "accountId": "acct_1",
+    "userId": "usr_1",
+    "workspaceId": "ws_1",
+    "type": "hold",
+    "amountCents": 600,
+    "currency": "CNY",
+    "sourceEventId": "compute_resource:compute_1:created",
+    "ledgerEntryId": "led_...",
+    "balanceBeforeCents": 1000,
+    "balanceAfterCents": 1000,
+    "frozenBeforeCents": 0,
+    "frozenAfterCents": 600,
+    "availableAfterCents": 400,
+    "createdAt": "2026-07-04T12:00:00Z"
+  }
+]
+```
+
 ### `POST /api/v1/billing/holds`
 
 Purpose: create a prepaid compute or storage hold before opening or resuming a paid resource.
@@ -541,6 +584,5 @@ Response:
 ## Planned
 
 - Wallet read API.
-- Wallet transaction list API.
 - Reconciliation guard API.
 - Kubernetes evidence snapshot API. Read-only collector and PostgreSQL persistence primitives are implemented locally; external API wiring is still planned.

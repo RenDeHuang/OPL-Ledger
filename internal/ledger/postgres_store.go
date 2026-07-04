@@ -23,6 +23,7 @@ type Store interface {
 	SettleWorkspaceUsage(context.Context, SettlementInput) (SettlementResult, error)
 	RecordResourceUsage(context.Context, ResourceUsageInput) (ResourceUsageResult, error)
 	RecordRequestUsage(context.Context, RequestUsageInput) (RequestUsageResult, error)
+	ListWalletTransactions(context.Context, WalletTransactionFilter) ([]wallet.Transaction, error)
 	AppendAuditEvent(context.Context, AuditEventInput) (AuditEvent, error)
 	ListAuditEvents(context.Context, AuditEventFilter) ([]AuditEvent, error)
 	AppendEvidenceRecord(context.Context, EvidenceRecordInput) (EvidenceRecord, error)
@@ -1243,6 +1244,21 @@ func (s *PostgresStore) RecordRequestUsage(ctx context.Context, input RequestUsa
 	}, nil
 }
 
+func (s *PostgresStore) ListWalletTransactions(ctx context.Context, filter WalletTransactionFilter) ([]wallet.Transaction, error) {
+	where, args := walletTransactionWhere(filter)
+	query := `SELECT payload FROM wallet_transactions`
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanWalletTransactions(rows)
+}
+
 func (s *PostgresStore) AppendAuditEvent(ctx context.Context, input AuditEventInput) (AuditEvent, error) {
 	event, err := auditlog.NewEvent(input)
 	if err != nil {
@@ -1755,6 +1771,25 @@ func loadWalletTransactionBySource(ctx context.Context, tx *sql.Tx, sourceEventI
 	return transaction, nil
 }
 
+func scanWalletTransactions(rows *sql.Rows) ([]wallet.Transaction, error) {
+	var transactions []wallet.Transaction
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var transaction wallet.Transaction
+		if err := json.Unmarshal(payload, &transaction); err != nil {
+			return nil, err
+		}
+		transactions = append(transactions, transaction)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return transactions, nil
+}
+
 func loadManualTopUpBySource(ctx context.Context, tx *sql.Tx, sourceEventID string) (ManualTopUp, error) {
 	row := tx.QueryRowContext(ctx, `
 		SELECT payload
@@ -2034,6 +2069,27 @@ func ledgerEntryWhere(filter EntryFilter) (string, []any) {
 	add("storage_id", filter.StorageID)
 	add("attachment_id", filter.AttachmentID)
 	add("source_event_id", filter.SourceEventID)
+	return strings.Join(clauses, " AND "), args
+}
+
+func walletTransactionWhere(filter WalletTransactionFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	add := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	add("account_id", filter.AccountID)
+	add("user_id", filter.UserID)
+	add("workspace_id", filter.WorkspaceID)
+	add("transaction_type", string(filter.Type))
+	add("source_event_id", filter.SourceEventID)
+	add("ledger_entry_id", filter.LedgerEntryID)
+	add("usage_log_id", filter.UsageLogID)
+	add("funding_source", filter.FundingSource)
 	return strings.Join(clauses, " AND "), args
 }
 

@@ -122,6 +122,7 @@ Implemented:
 - idempotent ledger entry append/list/summary;
 - wallet balance/frozen/hold arithmetic;
 - wallet snapshot PostgreSQL table;
+- wallet transaction list API with account/user/workspace/type/source/ledger/usage/funding filters;
 - manual top-up API with wallet snapshot, credit ledger entry, wallet transaction, manual topup record, and audit event in one PostgreSQL transaction;
 - request usage API with quota check, dedup-first PostgreSQL transaction, available-balance debit, usage log, wallet transaction, and audit event;
 - 7-day compute/storage prepaid hold pricing calculation for Basic and Pro package inputs;
@@ -145,7 +146,7 @@ Implemented:
 
 Not complete:
 
-- wallet transaction listing and reconciliation queries;
+- reconciliation queries;
 - persisted request quota management API; current request usage accepts Console-provided quota snapshots and records the incremented quota in the usage log payload;
 - external Kubernetes evidence snapshot API;
 - Console/Fabric integration;

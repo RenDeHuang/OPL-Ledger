@@ -671,6 +671,50 @@ func TestResourceUsageAPIRecordsIdempotentComputeUsage(t *testing.T) {
 	}
 }
 
+func TestWalletTransactionsAPIListsAndFiltersTransactions(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	topup := postManualTopUp(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"amountCents":1000,
+		"reason":"owner_credit_1"
+	}`))
+	if topup.code != http.StatusCreated {
+		t.Fatalf("topup status = %d body=%s", topup.code, topup.body)
+	}
+	hold := postHold(t, server, []byte(`{
+		"accountId":"acct_1",
+		"userId":"usr_1",
+		"workspaceId":"ws_1",
+		"holdType":"compute",
+		"amountCents":600,
+		"sourceEventId":"compute_resource:compute_1:created",
+		"resourceId":"compute_1"
+	}`))
+	if hold.code != http.StatusCreated {
+		t.Fatalf("hold status = %d body=%s", hold.code, hold.body)
+	}
+
+	all := getWalletTransactions(t, server, "/api/v1/billing/wallet-transactions?accountId=acct_1")
+	if all.code != http.StatusOK {
+		t.Fatalf("wallet transactions status = %d body=%s", all.code, all.body)
+	}
+	if len(all.transactions) != 2 {
+		t.Fatalf("transactions = %+v", all.transactions)
+	}
+	if all.transactions[0].Type != wallet.TransactionCredit || all.transactions[1].Type != wallet.TransactionHold {
+		t.Fatalf("transaction order/types = %+v", all.transactions)
+	}
+
+	holds := getWalletTransactions(t, server, "/api/v1/billing/wallet-transactions?accountId=acct_1&type=hold")
+	if holds.code != http.StatusOK {
+		t.Fatalf("hold transactions status = %d body=%s", holds.code, holds.body)
+	}
+	if len(holds.transactions) != 1 || holds.transactions[0].Type != wallet.TransactionHold || holds.transactions[0].SourceEventID != "compute_resource:compute_1:created" {
+		t.Fatalf("hold transactions = %+v", holds.transactions)
+	}
+}
+
 func TestAuditEventAPIPostsAndQueriesEvents(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	body := []byte(`{
@@ -918,6 +962,12 @@ type resourceUsageAPIResponse struct {
 	}
 }
 
+type walletTransactionsAPIResponse struct {
+	code         int
+	body         string
+	transactions []wallet.Transaction
+}
+
 func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppendResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -926,6 +976,19 @@ func postLedgerEntry(t *testing.T, server http.Handler, body []byte) ledgerAppen
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &response.entry); err != nil {
 			t.Fatalf("decode append response: %v body=%s", err, rec.Body.String())
+		}
+	}
+	return response
+}
+
+func getWalletTransactions(t *testing.T, server http.Handler, target string) walletTransactionsAPIResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	response := walletTransactionsAPIResponse{code: rec.Code, body: rec.Body.String()}
+	if rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &response.transactions); err != nil {
+			t.Fatalf("decode wallet transactions response: %v body=%s", err, rec.Body.String())
 		}
 	}
 	return response

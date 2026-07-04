@@ -490,6 +490,45 @@ func TestPostgresStoreRecordResourceUsageWritesPersistentLog(t *testing.T) {
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreListWalletTransactionsFiltersByAccountAndType(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	transaction := wallet.Transaction{
+		ID:                  "wtx_1",
+		UserID:              "usr_1",
+		AccountID:           "acct_1",
+		WorkspaceID:         "ws_1",
+		Type:                wallet.TransactionHold,
+		AmountCents:         600,
+		Currency:            "CNY",
+		SourceEventID:       "compute_resource:compute_1:created",
+		LedgerEntryID:       "led_1",
+		BalanceBeforeCents:  1000,
+		BalanceAfterCents:   1000,
+		FrozenBeforeCents:   0,
+		FrozenAfterCents:    600,
+		AvailableAfterCents: 400,
+		CreatedAt:           createdAt,
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT payload FROM wallet_transactions WHERE account_id = $1 AND transaction_type = $2 ORDER BY created_at, id`)).
+		WithArgs("acct_1", "hold").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(mustJSON(t, transaction)))
+
+	transactions, err := store.ListWalletTransactions(context.Background(), WalletTransactionFilter{
+		AccountID: "acct_1",
+		Type:      wallet.TransactionHold,
+	})
+	if err != nil {
+		t.Fatalf("list wallet transactions: %v", err)
+	}
+	if len(transactions) != 1 || transactions[0].ID != "wtx_1" || transactions[0].Type != wallet.TransactionHold {
+		t.Fatalf("transactions = %+v", transactions)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreAppendEvidenceRecordCreatesPersistentEvidenceRow(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

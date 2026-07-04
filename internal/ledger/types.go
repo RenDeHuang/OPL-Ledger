@@ -262,6 +262,17 @@ type ResourceUsageResult struct {
 	Created bool                   `json:"created"`
 }
 
+type WalletTransactionFilter struct {
+	AccountID     string
+	UserID        string
+	WorkspaceID   string
+	Type          wallet.TransactionType
+	SourceEventID string
+	LedgerEntryID string
+	UsageLogID    string
+	FundingSource string
+}
+
 type AuditEvent = auditlog.Event
 type AuditEventInput = auditlog.EventInput
 type AuditEventFilter = auditlog.EventFilter
