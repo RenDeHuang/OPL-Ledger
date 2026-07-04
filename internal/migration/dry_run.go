@@ -377,6 +377,7 @@ func (r *dryRun) validateManualTopups(topups []map[string]any, ledgerEntries []m
 
 func (r *dryRun) validateWalletTransactionLedgerLinks(transactions []map[string]any, ledgerEntries []map[string]any) {
 	ledgerByID := recordByID(ledgerEntries)
+	transactionsByLedgerID := recordsByField(transactions, "ledger_entry_id")
 	for _, transaction := range transactions {
 		ledgerID := fmt.Sprint(transaction["ledger_entry_id"])
 		if ledgerID == "" {
@@ -388,6 +389,18 @@ func (r *dryRun) validateWalletTransactionLedgerLinks(transactions []map[string]
 			continue
 		}
 		r.validateWalletTransactionLedgerLink(transaction, entry)
+	}
+	for _, entry := range ledgerEntries {
+		if !ledgerEventMovesWallet(fmt.Sprint(entry["event_type"])) {
+			continue
+		}
+		entryID := fmt.Sprint(entry["id"])
+		if entryID == "" {
+			continue
+		}
+		if len(transactionsByLedgerID[entryID]) == 0 {
+			r.walletMovingLedgerMissingTransaction("wallet-moving ledger entry missing wallet transaction: " + entryID)
+		}
 	}
 }
 
@@ -413,6 +426,19 @@ func (r *dryRun) requireWalletTransactionLedgerEqual(message string, left map[st
 func (r *dryRun) walletTransactionLedgerMismatch(message string) {
 	r.mismatch(message)
 	r.block("wallet_transaction_ledger_inconsistent")
+}
+
+func (r *dryRun) walletMovingLedgerMissingTransaction(message string) {
+	r.mismatch(message)
+	r.block("wallet_moving_ledger_missing_transaction")
+}
+
+func ledgerEventMovesWallet(eventType string) bool {
+	return walletTransactionTypeMatchesLedger("credit", eventType) ||
+		walletTransactionTypeMatchesLedger("hold", eventType) ||
+		walletTransactionTypeMatchesLedger("hold_release", eventType) ||
+		walletTransactionTypeMatchesLedger("debit", eventType) ||
+		walletTransactionTypeMatchesLedger("adjustment", eventType)
 }
 
 func walletTransactionTypeMatchesLedger(transactionType string, eventType string) bool {
