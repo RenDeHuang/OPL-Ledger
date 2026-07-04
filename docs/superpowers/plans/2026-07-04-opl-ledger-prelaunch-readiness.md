@@ -326,11 +326,11 @@ Do not run cloud deployment or mutation commands from this plan. No `kubectl app
 - Modify: `README.md`
 - Create: `docs/prelaunch/local-verification.md`
 
-- [ ] Document `go test ./...`.
-- [ ] Document `npm test --prefix web`.
-- [ ] Document `npm run build --prefix web`.
-- [ ] Document local PostgreSQL verification with `DATABASE_URL`.
-- [ ] Document that no cloud upload/deploy is part of pre-launch.
+- [x] Document `go test ./...`.
+- [x] Document `npm test --prefix web`.
+- [x] Document `npm run build --prefix web`.
+- [x] Document local PostgreSQL verification with `DATABASE_URL`.
+- [x] Document that no cloud upload/deploy is part of pre-launch.
 
 ## Verification
 

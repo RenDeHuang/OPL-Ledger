@@ -45,6 +45,11 @@ curl http://127.0.0.1:8788/healthz
 - `POST /api/v1/billing/request-usage`
 - `POST /api/v1/billing/reconciliation`
 - `GET /api/v1/billing/reconciliation/latest`
+- `GET /api/v1/billing/reconciliation/guard`
+- `POST /api/v1/audit/events`
+- `GET /api/v1/audit/events`
+- `POST /api/v1/ledger/evidence-records`
+- `GET /api/v1/ledger/evidence-records`
 - `POST /api/v1/ledger/task-receipts`
 - `GET /api/v1/ledger/task-receipts`
 
@@ -58,11 +63,14 @@ npm run dev --prefix web
 ## Verify
 
 ```bash
-go test ./...
+GOPROXY=off go test ./...
 npm test --prefix web
 npm run build --prefix web
 git diff --check
 ```
+
+For local PostgreSQL verification and service/admin token smoke tests, see
+[docs/prelaunch/local-verification.md](docs/prelaunch/local-verification.md).
 
 ## Pre-Launch
 

@@ -140,6 +140,7 @@ Implemented:
 - local-only shadow mode comparison procedure and safety rules;
 - local data migration dry-run mapping and required report format;
 - cutover and rollback checklists requiring explicit production approval;
+- local pre-launch verification commands and PostgreSQL smoke-test procedure;
 - React + TypeScript operator UI baseline.
 
 Not complete:
