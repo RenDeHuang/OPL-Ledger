@@ -122,8 +122,10 @@ Implemented:
 - idempotent ledger entry append/list/summary;
 - wallet balance/frozen/hold arithmetic;
 - wallet snapshot PostgreSQL table;
+- wallet snapshot list API with account/user filters for Console/admin reads;
 - wallet transaction list API with account/user/workspace/type/source/ledger/usage/funding filters;
 - manual top-up API with wallet snapshot, credit ledger entry, wallet transaction, manual topup record, and audit event in one PostgreSQL transaction;
+- manual top-up list API with account/user/operator/source/status filters for Console/admin reads;
 - request usage API with quota check, dedup-first PostgreSQL transaction, available-balance debit, usage log, wallet transaction, and audit event;
 - persisted request quota management API with account/user/workspace scope and PostgreSQL transaction integration for request usage;
 - 7-day compute/storage prepaid hold pricing calculation for Basic and Pro package inputs;
@@ -139,7 +141,7 @@ Implemented:
 - reconciliation guard API for missing, stale, failed, and passing recent reports;
 - Tencent reconciliation primitive with raw bill row normalization, workspace tag extraction, missing workspace fail-closed, and mixed-currency fail-closed behavior;
 - read-only Deployment evidence collector primitive plus external Kubernetes evidence snapshot append/list API with PostgreSQL persistence for redacted snapshots;
-- service-to-service Bearer token authentication for mutating endpoints and admin Bearer token authorization for operator evidence reads when tokens are configured;
+- service-to-service Bearer token authentication for mutating endpoints and admin Bearer token authorization for operator billing/evidence reads when tokens are configured;
 - local-only shadow mode comparison procedure and safety rules;
 - local data migration dry-run mapping and required report format;
 - cutover and rollback checklists requiring explicit production approval;

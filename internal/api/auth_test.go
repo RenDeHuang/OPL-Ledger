@@ -67,3 +67,40 @@ func TestAuthAdminTokenAllowsOperatorEvidenceRead(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 }
+
+func TestAuthRejectsMissingAdminTokenForBillingWalletReads(t *testing.T) {
+	server := NewServerWithOptions(ledger.NewMemoryStore(), Options{Auth: auth.Config{AdminToken: "admin_1"}})
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/billing/wallets?accountId=acct_1", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthAdminTokenAllowsBillingTopUpReads(t *testing.T) {
+	store := ledger.NewMemoryStore()
+	if _, err := store.ManualTopUp(nil, ledger.ManualTopUpInput{
+		AccountID:     "acct_1",
+		UserID:        "usr_1",
+		AmountCents:   25000,
+		SourceEventID: "console_manual_topup_1",
+		Reason:        "initial launch credit",
+	}); err != nil {
+		t.Fatalf("seed manual topup: %v", err)
+	}
+	server := NewServerWithOptions(store, Options{Auth: auth.Config{AdminToken: "admin_1"}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/topups?accountId=acct_1", nil)
+	req.Header.Set("Authorization", "Bearer admin_1")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var topups []ledger.ManualTopUp
+	if err := json.Unmarshal(rec.Body.Bytes(), &topups); err != nil {
+		t.Fatalf("decode topups: %v", err)
+	}
+	if len(topups) != 1 {
+		t.Fatalf("topups = %+v", topups)
+	}
+}
