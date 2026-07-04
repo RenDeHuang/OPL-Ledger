@@ -529,6 +529,38 @@ func TestPostgresStoreListWalletTransactionsFiltersByAccountAndType(t *testing.T
 	assertSQLExpectations(t, mock)
 }
 
+func TestPostgresStoreListReconciliationReportsFiltersByProviderAndStatus(t *testing.T) {
+	db, mock := newMockDB(t)
+	store := NewPostgresStore(db)
+	createdAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	payload := map[string]any{"lines": []any{map[string]any{"workspaceId": "ws_1", "status": "fail"}}}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, provider, status, expected_amount_cents, actual_amount_cents, difference_cents, payload, created_at FROM billing_reconciliation_reports WHERE provider = $1 AND status = $2 ORDER BY created_at DESC, id DESC`)).
+		WithArgs("tencent", "fail").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"provider",
+			"status",
+			"expected_amount_cents",
+			"actual_amount_cents",
+			"difference_cents",
+			"payload",
+			"created_at",
+		}).AddRow("rec_1", "tencent", "fail", int64(1200), int64(1100), int64(-100), mustJSON(t, payload), createdAt))
+
+	reports, err := store.ListReconciliationReports(context.Background(), ReconciliationReportFilter{
+		Provider: "tencent",
+		Status:   "fail",
+	})
+	if err != nil {
+		t.Fatalf("list reconciliation reports: %v", err)
+	}
+	if len(reports) != 1 || reports[0].ID != "rec_1" || reports[0].Status != "fail" || reports[0].DifferenceCents != -100 {
+		t.Fatalf("reports = %+v", reports)
+	}
+	assertSQLExpectations(t, mock)
+}
+
 func TestPostgresStoreAppendEvidenceRecordCreatesPersistentEvidenceRow(t *testing.T) {
 	db, mock := newMockDB(t)
 	store := NewPostgresStore(db)

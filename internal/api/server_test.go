@@ -813,6 +813,45 @@ func TestReconciliationAPIStoresLatestReport(t *testing.T) {
 	}
 }
 
+func TestReconciliationAPIListsReportsByProviderAndStatus(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	passBody := []byte(`{
+		"provider":"tencent",
+		"markupRate":0.2,
+		"ledgerRows":[{"workspaceId":"ws_1","resourceType":"compute","amountCents":-1200}],
+		"tencentRows":[{"workspaceId":"ws_1","resourceType":"compute","amountCents":1000}]
+	}`)
+	postPass := httptest.NewRecorder()
+	server.ServeHTTP(postPass, httptest.NewRequest(http.MethodPost, "/api/v1/billing/reconciliation", bytes.NewReader(passBody)))
+	if postPass.Code != http.StatusCreated {
+		t.Fatalf("post pass reconciliation status = %d body=%s", postPass.Code, postPass.Body.String())
+	}
+	failBody := []byte(`{
+		"provider":"tencent",
+		"markupRate":0.2,
+		"ledgerRows":[{"workspaceId":"ws_1","resourceType":"compute","amountCents":-1100}],
+		"tencentRows":[{"workspaceId":"ws_1","resourceType":"compute","amountCents":1000}]
+	}`)
+	postFail := httptest.NewRecorder()
+	server.ServeHTTP(postFail, httptest.NewRequest(http.MethodPost, "/api/v1/billing/reconciliation", bytes.NewReader(failBody)))
+	if postFail.Code != http.StatusCreated {
+		t.Fatalf("post fail reconciliation status = %d body=%s", postFail.Code, postFail.Body.String())
+	}
+
+	get := httptest.NewRecorder()
+	server.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/billing/reconciliation?provider=tencent&status=fail", nil))
+	if get.Code != http.StatusOK {
+		t.Fatalf("list reconciliation status = %d body=%s", get.Code, get.Body.String())
+	}
+	var reports []ledger.ReconciliationReport
+	if err := json.Unmarshal(get.Body.Bytes(), &reports); err != nil {
+		t.Fatalf("decode reconciliation reports: %v", err)
+	}
+	if len(reports) != 1 || reports[0].Provider != "tencent" || reports[0].Status != "fail" {
+		t.Fatalf("reports = %+v", reports)
+	}
+}
+
 func TestReconciliationGuardBlocksWhenReportMissing(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	rec := httptest.NewRecorder()

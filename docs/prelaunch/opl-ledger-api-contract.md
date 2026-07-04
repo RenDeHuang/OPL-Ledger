@@ -339,6 +339,36 @@ Purpose: store a Tencent reconciliation report generated from supplied rows.
 
 Normalization: local reconciliation helpers can normalize raw Tencent bill rows using direct `workspaceId` fields or `workspace_id`/`workspaceId` tags, classify compute/storage resources, and fail closed when workspace id is missing or rows mix currencies.
 
+### `GET /api/v1/billing/reconciliation`
+
+Purpose: list stored reconciliation reports for shadow-mode review, operator investigation, and cutover evidence.
+
+Authorization: operator evidence read; when `OPL_LEDGER_ADMIN_TOKEN` is configured, callers must send `Authorization: Bearer <admin-token>`.
+
+Filters:
+
+- `provider`
+- `status`
+
+Response:
+
+```json
+[
+  {
+    "id": "rec_...",
+    "provider": "tencent",
+    "status": "fail",
+    "ledgerAmountCents": 1100,
+    "expectedAmountCents": 1200,
+    "differenceCents": -100,
+    "payload": {
+      "lines": []
+    },
+    "createdAt": "2026-07-04T12:00:00Z"
+  }
+]
+```
+
 ### `GET /api/v1/billing/reconciliation/latest`
 
 Purpose: return latest stored reconciliation report.

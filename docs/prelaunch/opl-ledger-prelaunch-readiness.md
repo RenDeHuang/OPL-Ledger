@@ -134,6 +134,7 @@ Implemented:
 - task receipt record/query with PostgreSQL `accountId/workspaceId/taskId/sourceEventId` idempotency;
 - Console-provided workspace ownership validation hook for task receipt writes;
 - reconciliation submit/latest;
+- reconciliation report list API with provider/status filters;
 - reconciliation guard API for missing, stale, failed, and passing recent reports;
 - Tencent reconciliation primitive with raw bill row normalization, workspace tag extraction, missing workspace fail-closed, and mixed-currency fail-closed behavior;
 - read-only Deployment evidence collector primitive with PostgreSQL persistence for redacted Kubernetes evidence snapshots;
@@ -146,7 +147,6 @@ Implemented:
 
 Not complete:
 
-- reconciliation queries;
 - persisted request quota management API; current request usage accepts Console-provided quota snapshots and records the incremented quota in the usage log payload;
 - external Kubernetes evidence snapshot API;
 - Console/Fabric integration;

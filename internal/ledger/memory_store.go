@@ -949,6 +949,19 @@ func (s *MemoryStore) AppendReconciliationReport(_ context.Context, report Recon
 	return report, nil
 }
 
+func (s *MemoryStore) ListReconciliationReports(_ context.Context, filter ReconciliationReportFilter) ([]ReconciliationReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ReconciliationReport
+	for _, report := range s.reconciliationReports {
+		if !matchesReconciliationReport(report, filter) {
+			continue
+		}
+		out = append(out, cloneReconciliationReport(report))
+	}
+	return out, nil
+}
+
 func (s *MemoryStore) LatestReconciliationReport(_ context.Context) (ReconciliationReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -956,6 +969,24 @@ func (s *MemoryStore) LatestReconciliationReport(_ context.Context) (Reconciliat
 		return ReconciliationReport{}, errors.New("billing_reconciliation_report_missing")
 	}
 	return s.reconciliationReports[len(s.reconciliationReports)-1], nil
+}
+
+func matchesReconciliationReport(report ReconciliationReport, filter ReconciliationReportFilter) bool {
+	if filter.Provider != "" && report.Provider != filter.Provider {
+		return false
+	}
+	if filter.Status != "" && report.Status != filter.Status {
+		return false
+	}
+	return true
+}
+
+func cloneReconciliationReport(report ReconciliationReport) ReconciliationReport {
+	if report.Payload == nil {
+		return report
+	}
+	report.Payload = cloneMap(report.Payload)
+	return report
 }
 
 func matches(entry Entry, filter EntryFilter) bool {

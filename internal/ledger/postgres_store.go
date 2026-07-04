@@ -34,6 +34,7 @@ type Store interface {
 	AppendTaskReceipt(context.Context, TaskReceiptInput) (TaskReceipt, error)
 	ListTaskReceipts(context.Context, TaskReceiptFilter) ([]TaskReceipt, error)
 	AppendReconciliationReport(context.Context, ReconciliationReport) (ReconciliationReport, error)
+	ListReconciliationReports(context.Context, ReconciliationReportFilter) ([]ReconciliationReport, error)
 	LatestReconciliationReport(context.Context) (ReconciliationReport, error)
 }
 
@@ -1790,6 +1791,47 @@ func scanWalletTransactions(rows *sql.Rows) ([]wallet.Transaction, error) {
 	return transactions, nil
 }
 
+func scanReconciliationReports(rows *sql.Rows) ([]ReconciliationReport, error) {
+	var reports []ReconciliationReport
+	for rows.Next() {
+		report, err := scanReconciliationReport(rows)
+		if err != nil {
+			return nil, err
+		}
+		reports = append(reports, report)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return reports, nil
+}
+
+func scanReconciliationReport(scanner interface {
+	Scan(dest ...any) error
+}) (ReconciliationReport, error) {
+	var report ReconciliationReport
+	var payload []byte
+	err := scanner.Scan(
+		&report.ID,
+		&report.Provider,
+		&report.Status,
+		&report.ExpectedAmountCents,
+		&report.LedgerAmountCents,
+		&report.DifferenceCents,
+		&payload,
+		&report.CreatedAt,
+	)
+	if err != nil {
+		return ReconciliationReport{}, err
+	}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &report.Payload); err != nil {
+			return ReconciliationReport{}, err
+		}
+	}
+	return report, nil
+}
+
 func loadManualTopUpBySource(ctx context.Context, tx *sql.Tx, sourceEventID string) (ManualTopUp, error) {
 	row := tx.QueryRowContext(ctx, `
 		SELECT payload
@@ -2017,6 +2059,21 @@ func (s *PostgresStore) AppendReconciliationReport(ctx context.Context, report R
 	return report, nil
 }
 
+func (s *PostgresStore) ListReconciliationReports(ctx context.Context, filter ReconciliationReportFilter) ([]ReconciliationReport, error) {
+	where, args := reconciliationReportWhere(filter)
+	query := `SELECT id, provider, status, expected_amount_cents, actual_amount_cents, difference_cents, payload, created_at FROM billing_reconciliation_reports`
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	query += ` ORDER BY created_at DESC, id DESC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanReconciliationReports(rows)
+}
+
 func (s *PostgresStore) LatestReconciliationReport(ctx context.Context) (ReconciliationReport, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, provider, status, expected_amount_cents, actual_amount_cents, difference_cents, payload, created_at
@@ -2090,6 +2147,21 @@ func walletTransactionWhere(filter WalletTransactionFilter) (string, []any) {
 	add("ledger_entry_id", filter.LedgerEntryID)
 	add("usage_log_id", filter.UsageLogID)
 	add("funding_source", filter.FundingSource)
+	return strings.Join(clauses, " AND "), args
+}
+
+func reconciliationReportWhere(filter ReconciliationReportFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	add := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	add("provider", filter.Provider)
+	add("status", filter.Status)
 	return strings.Join(clauses, " AND "), args
 }
 

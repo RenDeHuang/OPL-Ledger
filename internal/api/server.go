@@ -66,6 +66,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/billing/resource-usage", s.recordResourceUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/request-usage", s.recordRequestUsage)
 	s.mux.HandleFunc("POST /api/v1/billing/reconciliation", s.recordReconciliation)
+	s.mux.HandleFunc("GET /api/v1/billing/reconciliation", s.listReconciliation)
 	s.mux.HandleFunc("GET /api/v1/billing/reconciliation/latest", s.latestReconciliation)
 	s.mux.HandleFunc("GET /api/v1/billing/reconciliation/guard", s.reconciliationGuard)
 	s.mux.HandleFunc("POST /api/v1/audit/events", s.recordAuditEvent)
@@ -430,6 +431,22 @@ func (s *Server) recordReconciliation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, stored)
+}
+
+func (s *Server) listReconciliation(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	q := r.URL.Query()
+	reports, err := s.store.ListReconciliationReports(r.Context(), ledger.ReconciliationReportFilter{
+		Provider: q.Get("provider"),
+		Status:   q.Get("status"),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, reports)
 }
 
 func (s *Server) latestReconciliation(w http.ResponseWriter, r *http.Request) {

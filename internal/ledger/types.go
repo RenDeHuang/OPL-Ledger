@@ -119,6 +119,11 @@ type ReconciliationReport struct {
 	CreatedAt           time.Time      `json:"createdAt"`
 }
 
+type ReconciliationReportFilter struct {
+	Provider string
+	Status   string
+}
+
 type ReconciliationGuard struct {
 	Status             string    `json:"status"`
 	BlockNewWorkspaces bool      `json:"blockNewWorkspaces"`
