@@ -179,6 +179,8 @@ Mapping:
 Validation:
 
 - every transaction linked to a ledger entry must resolve to a preview `ledger_entries` row.
+- linked transactions and ledger entries must agree on account id, workspace id, source event id, and amount.
+- linked transaction type must match the ledger event family: `credit`, `*_hold`, `*_hold_released`, `request_debit`, or `*_debit`.
 - before/after balances must match wallet replay.
 
 ## Manual Topups

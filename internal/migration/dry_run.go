@@ -94,6 +94,7 @@ func RunDryRun(inputDir string, outputDir string) (Report, error) {
 	resourceUsagePreview := r.mapResourceUsageLogs(resourceUsageLogs)
 	auditPreview := r.mapAuditEvents(auditEvents)
 	r.validateWallets(walletPreview)
+	r.validateWalletTransactionLedgerLinks(transactionPreview, ledgerPreview)
 	r.validateManualTopups(topupPreview, ledgerPreview, transactionPreview, auditPreview)
 	r.validateRequestUsageDedup(requestUsagePreview, requestUsageDedupPreview)
 	r.validateRequestUsageAccounting(requestUsagePreview, ledgerPreview, transactionPreview, auditPreview)
@@ -371,6 +372,63 @@ func (r *dryRun) validateManualTopups(topups []map[string]any, ledgerEntries []m
 		} else if id != "" {
 			r.validateTopUpAuditEvent(topup, auditByID[id])
 		}
+	}
+}
+
+func (r *dryRun) validateWalletTransactionLedgerLinks(transactions []map[string]any, ledgerEntries []map[string]any) {
+	ledgerByID := recordByID(ledgerEntries)
+	for _, transaction := range transactions {
+		ledgerID := fmt.Sprint(transaction["ledger_entry_id"])
+		if ledgerID == "" {
+			continue
+		}
+		entry, ok := ledgerByID[ledgerID]
+		if !ok {
+			r.walletTransactionLedgerMismatch("wallet transaction references missing ledger entry: " + ledgerID)
+			continue
+		}
+		r.validateWalletTransactionLedgerLink(transaction, entry)
+	}
+}
+
+func (r *dryRun) validateWalletTransactionLedgerLink(transaction map[string]any, entry map[string]any) {
+	r.requireWalletTransactionLedgerEqual("wallet transaction ledger account mismatch", transaction, "account_id", entry, "account_id")
+	r.requireWalletTransactionLedgerEqual("wallet transaction ledger workspace mismatch", transaction, "workspace_id", entry, "workspace_id")
+	r.requireWalletTransactionLedgerEqual("wallet transaction ledger source mismatch", transaction, "source_event_id", entry, "source_event_id")
+	if int64Value(transaction["amount_cents"]) != int64Value(entry["amount_cents"]) {
+		r.walletTransactionLedgerMismatch(fmt.Sprintf("wallet transaction ledger amount mismatch: transaction=%v entry=%v", transaction["amount_cents"], entry["amount_cents"]))
+	}
+	if !walletTransactionTypeMatchesLedger(fmt.Sprint(transaction["transaction_type"]), fmt.Sprint(entry["event_type"])) {
+		r.walletTransactionLedgerMismatch(fmt.Sprintf("wallet transaction type mismatches ledger event: transaction=%v entry=%v", transaction["transaction_type"], entry["event_type"]))
+	}
+}
+
+func (r *dryRun) requireWalletTransactionLedgerEqual(message string, left map[string]any, leftKey string, right map[string]any, rightKey string) {
+	if fmt.Sprint(left[leftKey]) == fmt.Sprint(right[rightKey]) {
+		return
+	}
+	r.walletTransactionLedgerMismatch(fmt.Sprintf("%s: %s=%v %s=%v", message, leftKey, left[leftKey], rightKey, right[rightKey]))
+}
+
+func (r *dryRun) walletTransactionLedgerMismatch(message string) {
+	r.mismatch(message)
+	r.block("wallet_transaction_ledger_inconsistent")
+}
+
+func walletTransactionTypeMatchesLedger(transactionType string, eventType string) bool {
+	switch transactionType {
+	case "credit":
+		return eventType == "credit" || eventType == "manual_topup"
+	case "hold":
+		return strings.HasSuffix(eventType, "_hold") && !strings.HasSuffix(eventType, "_hold_released")
+	case "hold_release":
+		return strings.HasSuffix(eventType, "_hold_released")
+	case "debit":
+		return eventType == "request_debit" || strings.HasSuffix(eventType, "_debit")
+	case "adjustment":
+		return strings.Contains(eventType, "adjustment")
+	default:
+		return false
 	}
 }
 

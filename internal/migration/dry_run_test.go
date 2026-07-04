@@ -565,6 +565,43 @@ func TestDryRunPreviewFailsOnInconsistentWalletSnapshot(t *testing.T) {
 	assertContains(t, report.BlockedReasons, "wallet_snapshot_inconsistent")
 }
 
+func TestDryRunPreviewFailsOnInconsistentWalletTransactionLedgerLink(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	writeJSONFile(t, inputDir, "users.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "manualTopups.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "requestUsageDedup.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "resourceUsageLogs.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "audit.json", []map[string]any{})
+	writeJSONFile(t, inputDir, "billingLedger.json", []map[string]any{{
+		"id":            "led_hold_1",
+		"type":          "compute_hold",
+		"accountId":     "acct_1",
+		"workspaceId":   "ws_1",
+		"sourceEventId": "wrong_source",
+		"amountCents":   500,
+	}})
+	writeJSONFile(t, inputDir, "walletTransactions.json", []map[string]any{{
+		"id":            "wtx_hold_1",
+		"accountId":     "acct_1",
+		"workspaceId":   "ws_1",
+		"type":          "hold",
+		"amountCents":   600,
+		"sourceEventId": "compute_resource:compute_1:created",
+		"ledgerEntryId": "led_hold_1",
+	}})
+
+	report, err := RunDryRun(inputDir, outputDir)
+	if err != nil {
+		t.Fatalf("run dry run: %v", err)
+	}
+	if report.Status != "fail" {
+		t.Fatalf("report status = %q", report.Status)
+	}
+	assertContains(t, report.BlockedReasons, "wallet_transaction_ledger_inconsistent")
+}
+
 func writeJSONFile(t *testing.T, dir string, name string, value any) {
 	t.Helper()
 	payload, err := json.MarshalIndent(value, "", "  ")
